@@ -10,15 +10,15 @@
   --color-card: #181818;
   --color-hover: #282828;
   --color-border: #282828;
-  
+
   --color-text-primary: #ffffff;
   --color-text-secondary: #b3b3b3;
   --color-text-muted: #6a6a6a;
-  
+
   --color-accent-primary: #d4a853;
   --color-accent-secondary: #c9963e;
   --color-accent-glow: rgba(212, 168, 83, 0.3);
-  
+
   --gradient-1: #1a1a2e;
   --gradient-2: #16213e;
   --gradient-3: #0f3460;
@@ -31,14 +31,18 @@
   padding: 0;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   height: 100%;
   width: 100%;
   overflow: hidden;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
   background-color: var(--color-black);
   color: var(--color-text-primary);
   -webkit-font-smoothing: antialiased;
@@ -81,17 +85,17 @@ body {
   .text-balance {
     text-wrap: balance;
   }
-  
+
   .scrollbar-thin {
     scrollbar-width: thin;
     scrollbar-color: var(--color-hover) transparent;
   }
-  
+
   .scrollbar-none {
     scrollbar-width: none;
     -ms-overflow-style: none;
   }
-  
+
   .scrollbar-none::-webkit-scrollbar {
     display: none;
   }
@@ -103,21 +107,22 @@ body {
     background-size: 400% 400%;
     animation: gradient-shift 15s ease infinite;
   }
-  
+
   @keyframes gradient-shift {
-    0%, 100% {
+    0%,
+    100% {
       background-position: 0% 50%;
     }
     50% {
       background-position: 100% 50%;
     }
   }
-  
+
   .glass-effect {
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
   }
-  
+
   .glow-accent {
     box-shadow: 0 0 20px var(--color-accent-glow);
   }
@@ -179,7 +184,7 @@ input[type="range"]:hover::-moz-range-thumb {
 }
 
 .progress-bar::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 0;
   top: 50%;
@@ -189,4 +194,44 @@ input[type="range"]:hover::-moz-range-thumb {
   border-radius: 2px;
   width: var(--progress, 0%);
   pointer-events: none;
+}
+
+/* Spotify Green Accent */
+.spotify-green {
+  color: #1db954;
+}
+
+.bg-spotify-green {
+  background-color: #1db954;
+}
+
+/* Card hover effects */
+.card-hover {
+  transition: background-color 0.3s ease;
+}
+
+.card-hover:hover {
+  background-color: var(--color-hover);
+}
+
+/* Play button animation */
+.play-button-animate {
+  transition:
+    transform 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.group:hover .play-button-animate {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+/* Hide scrollbar but keep functionality */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
 }

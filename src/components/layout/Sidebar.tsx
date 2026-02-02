@@ -1,195 +1,406 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { clsx } from "clsx";
+import { invoke } from "@tauri-apps/api/tauri";
 import { useLibraryStore } from "../../stores/libraryStore";
+import { usePlayerStore } from "../../stores/playerStore";
+import AlbumArt from "../common/AlbumArt";
 import {
   HomeIcon,
-  AlbumIcon,
-  ArtistIcon,
+  HomeFilledIcon,
+  SearchIcon,
   LibraryIcon,
-  FolderPlusIcon,
-  HeartIcon,
-  SparklesIcon,
-  AudioWaveIcon,
-  SettingsIcon,
-  ChartIcon,
+  PlusIcon,
+  HeartFilledIcon,
+  PinIcon,
 } from "../icons";
+import type { Track } from "../../types";
+
+type FilterTab = "playlists" | "artists" | "albums";
 
 export default function Sidebar() {
   const navigate = useNavigate();
-  const smartPlaylists = useLibraryStore((state) => state.smartPlaylists);
-  const [isHovered, setIsHovered] = useState(false);
+  const { albums, artists, recentlyPlayed, smartPlaylists } = useLibraryStore();
+  const { playTrack } = usePlayerStore();
+  const [activeFilter, setActiveFilter] = useState<FilterTab | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
+  const [albumArtworks, setAlbumArtworks] = useState<Record<string, string>>(
+    {},
+  );
 
-  const navItems = [
-    { path: "/", icon: HomeIcon, label: "Home" },
-    { path: "/albums", icon: AlbumIcon, label: "Albums" },
-    { path: "/artists", icon: ArtistIcon, label: "Artists" },
-    { path: "/library", icon: LibraryIcon, label: "Library" },
-  ];
+  // Load artworks for albums
+  useEffect(() => {
+    const loadArtworks = async () => {
+      const artworks: Record<string, string> = {};
+      for (const track of recentlyPlayed.slice(0, 10)) {
+        const key = `${track.album}-${track.artist}`;
+        if (!artworks[key]) {
+          try {
+            const url = await invoke<string | null>("get_track_artwork", {
+              filePath: track.file_path,
+            });
+            if (url) artworks[key] = url;
+          } catch {
+            // ignore
+          }
+        }
+      }
+      setAlbumArtworks(artworks);
+    };
+    loadArtworks();
+  }, [recentlyPlayed]);
 
-  const utilityItems = [
-    { path: "/settings", icon: SettingsIcon, label: "Settings" },
-    { path: "/statistics", icon: ChartIcon, label: "Statistics" },
-  ];
-
-  const getPlaylistIcon = (iconName: string) => {
-    switch (iconName) {
-      case "heart":
-        return HeartIcon;
-      case "sparkles":
-        return SparklesIcon;
-      case "audio":
-        return AudioWaveIcon;
-      default:
-        return LibraryIcon;
+  const handlePlayAlbum = async (albumName: string, artistName: string) => {
+    try {
+      const albumTracks = await invoke<Track[]>("get_album_tracks", {
+        album: albumName,
+        artist: artistName,
+      });
+      if (albumTracks.length > 0) {
+        playTrack(albumTracks[0], albumTracks);
+      }
+    } catch (error) {
+      console.error("Failed to play album:", error);
     }
   };
 
+  // Get unique items from recently played
+  const recentAlbums = recentlyPlayed
+    .reduce((acc, track) => {
+      const key = `${track.album}-${track.artist}`;
+      if (!acc.find((t) => `${t.album}-${t.artist}` === key)) {
+        acc.push(track);
+      }
+      return acc;
+    }, [] as Track[])
+    .slice(0, 20);
+
+  const filteredItems = () => {
+    const query = searchQuery.toLowerCase();
+
+    if (activeFilter === "artists") {
+      return artists
+        .filter((a) => a.name.toLowerCase().includes(query))
+        .slice(0, 30);
+    }
+    if (activeFilter === "albums") {
+      return albums
+        .filter(
+          (a) =>
+            a.name.toLowerCase().includes(query) ||
+            a.artist.toLowerCase().includes(query),
+        )
+        .slice(0, 30);
+    }
+
+    // Default: show playlists and recent albums
+    if (query) {
+      return recentAlbums.filter(
+        (t) =>
+          t.album.toLowerCase().includes(query) ||
+          t.artist.toLowerCase().includes(query),
+      );
+    }
+    return recentAlbums;
+  };
+
+  const filterTabs: { id: FilterTab; label: string }[] = [
+    { id: "playlists", label: "Playlists" },
+    { id: "artists", label: "Artists" },
+    { id: "albums", label: "Albums" },
+  ];
+
   return (
-    <aside
-      className="w-56 flex-shrink-0 flex flex-col bg-amoled-black/80 backdrop-blur-xl border-r border-amoled-border relative z-10"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      {/* Logo */}
-      <div className="p-6 pb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent-primary to-accent-secondary flex items-center justify-center">
-            <span className="text-lg">♪</span>
-          </div>
-          <span className="text-xl font-bold text-text-primary tracking-tight">
-            HiFlac
-          </span>
-        </div>
+    <aside className="w-[280px] flex-shrink-0 flex flex-col gap-2 p-2 relative z-10">
+      {/* Top Navigation Card */}
+      <div className="bg-amoled-elevated rounded-lg p-2">
+        <NavLink
+          to="/"
+          className={({ isActive }) =>
+            clsx(
+              "flex items-center gap-4 px-3 py-2 rounded-md font-semibold transition-colors",
+              isActive
+                ? "text-text-primary"
+                : "text-text-secondary hover:text-text-primary",
+            )
+          }
+        >
+          {({ isActive }) => (
+            <>
+              {isActive ? (
+                <HomeFilledIcon className="w-6 h-6" />
+              ) : (
+                <HomeIcon className="w-6 h-6" />
+              )}
+              <span>Home</span>
+            </>
+          )}
+        </NavLink>
+
+        <NavLink
+          to="/search"
+          className={({ isActive }) =>
+            clsx(
+              "flex items-center gap-4 px-3 py-2 rounded-md font-semibold transition-colors",
+              isActive
+                ? "text-text-primary"
+                : "text-text-secondary hover:text-text-primary",
+            )
+          }
+        >
+          <SearchIcon className="w-6 h-6" />
+          <span>Search</span>
+        </NavLink>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 px-3 overflow-y-auto scrollbar-thin">
-        {/* Main nav */}
-        <div className="space-y-1">
-          {navItems.map(({ path, icon: Icon, label }) => (
-            <NavLink
-              key={path}
-              to={path}
-              className={({ isActive }) =>
-                clsx(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
-                  isActive
-                    ? "bg-amoled-hover text-text-primary"
-                    : "text-text-secondary hover:text-text-primary hover:bg-amoled-hover/50",
-                )
-              }
+      {/* Library Card */}
+      <div className="flex-1 bg-amoled-elevated rounded-lg flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="p-4 pb-2">
+          <div className="flex items-center justify-between mb-4">
+            <button
+              onClick={() => navigate("/library")}
+              className="flex items-center gap-3 text-text-secondary hover:text-text-primary transition-colors font-semibold"
             >
-              <Icon className="w-5 h-5" />
-              <span>{label}</span>
-            </NavLink>
-          ))}
+              <LibraryIcon className="w-6 h-6" />
+              <span>Your Library</span>
+            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => navigate("/library")}
+                className="p-2 text-text-secondary hover:text-text-primary hover:bg-amoled-hover rounded-full transition-all"
+                title="Create playlist or folder"
+              >
+                <PlusIcon className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Filter Tabs */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {activeFilter && (
+              <button
+                onClick={() => setActiveFilter(null)}
+                className="p-1.5 bg-amoled-hover rounded-full text-text-primary hover:bg-amoled-card transition-colors"
+              >
+                <svg
+                  className="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            )}
+            {filterTabs
+              .filter((tab) => !activeFilter || tab.id === activeFilter)
+              .map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() =>
+                    setActiveFilter(activeFilter === tab.id ? null : tab.id)
+                  }
+                  className={clsx(
+                    "px-3 py-1.5 text-sm font-medium rounded-full transition-colors",
+                    activeFilter === tab.id
+                      ? "bg-text-primary text-amoled-black"
+                      : "bg-amoled-hover text-text-primary hover:bg-amoled-card",
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
+          </div>
         </div>
 
-        {/* Add Folder */}
-        <div className="mt-6">
+        {/* Search and Sort Row */}
+        <div className="px-4 py-2 flex items-center justify-between">
           <button
-            onClick={() => navigate("/library")}
-            className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-amoled-hover/50 transition-all duration-200"
+            onClick={() => setShowSearch(!showSearch)}
+            className="p-1.5 text-text-secondary hover:text-text-primary transition-colors"
           >
-            <FolderPlusIcon className="w-5 h-5" />
-            <span>Add Folder</span>
+            <SearchIcon className="w-4 h-4" />
+          </button>
+          <button className="flex items-center gap-1 text-text-secondary hover:text-text-primary text-sm transition-colors">
+            <span>Recents</span>
+            <svg
+              className="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <line x1="8" y1="6" x2="21" y2="6" />
+              <line x1="8" y1="12" x2="21" y2="12" />
+              <line x1="8" y1="18" x2="21" y2="18" />
+              <line x1="3" y1="6" x2="3.01" y2="6" />
+              <line x1="3" y1="12" x2="3.01" y2="12" />
+              <line x1="3" y1="18" x2="3.01" y2="18" />
+            </svg>
           </button>
         </div>
 
-        {/* Smart Playlists */}
-        {smartPlaylists.length > 0 && (
-          <div className="mt-8">
-            <h3 className="px-3 mb-2 text-xs font-semibold text-text-muted uppercase tracking-wider">
-              Smart Playlists
-            </h3>
-            <div className="space-y-1">
-              {smartPlaylists.map((playlist) => {
-                const Icon = getPlaylistIcon(playlist.icon);
-                return (
-                  <NavLink
-                    key={playlist.id}
-                    to={`/playlist/${playlist.id}`}
-                    className={({ isActive }) =>
-                      clsx(
-                        "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
-                        isActive
-                          ? "bg-amoled-hover text-text-primary"
-                          : "text-text-secondary hover:text-text-primary hover:bg-amoled-hover/50",
-                      )
-                    }
-                  >
-                    <Icon
-                      className={clsx(
-                        "w-5 h-5",
-                        playlist.id === "favorites" && "text-red-500",
-                      )}
-                    />
-                    <span className="flex-1 truncate">{playlist.name}</span>
-                    <span className="text-xs text-text-muted">
-                      {playlist.track_count}
-                    </span>
-                  </NavLink>
-                );
-              })}
-            </div>
+        {/* Search Input */}
+        {showSearch && (
+          <div className="px-4 pb-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search in Your Library"
+              className="w-full px-3 py-1.5 bg-amoled-hover rounded-md text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-text-secondary"
+              autoFocus
+            />
           </div>
         )}
 
-        {/* Audio Tools */}
-        <div className="mt-8">
-          <h3 className="px-3 mb-2 text-xs font-semibold text-text-muted uppercase tracking-wider">
-            Audio Tools
-          </h3>
-          <div className="space-y-1">
-            {/* SpotiFlac - On-demand streaming */}
-            <NavLink
-              to="/spotiflac"
-              className={({ isActive }) =>
-                clsx(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
-                  isActive
-                    ? "bg-amoled-hover text-text-primary"
-                    : "text-text-secondary hover:text-text-primary hover:bg-amoled-hover/50",
-                )
-              }
-            >
-              <svg
-                className="w-5 h-5 text-[#1DB954]"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
-              </svg>
-              <span>SpotiFlac</span>
-              <span className="text-[10px] px-1.5 py-0.5 bg-[#1DB954]/20 text-[#1DB954] rounded-full ml-auto">
-                Hi-Res
-              </span>
-            </NavLink>
-
-            {utilityItems.map(({ path, icon: Icon, label }) => (
+        {/* Library Items */}
+        <div className="flex-1 overflow-y-auto scrollbar-thin px-2 pb-4">
+          {/* Smart Playlists */}
+          {!activeFilter &&
+            smartPlaylists.map((playlist) => (
               <NavLink
-                key={path}
-                to={path}
+                key={playlist.id}
+                to={`/playlist/${playlist.id}`}
                 className={({ isActive }) =>
                   clsx(
-                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
-                    isActive
-                      ? "bg-amoled-hover text-text-primary"
-                      : "text-text-secondary hover:text-text-primary hover:bg-amoled-hover/50",
+                    "flex items-center gap-3 p-2 rounded-md transition-colors group",
+                    isActive ? "bg-amoled-hover" : "hover:bg-amoled-hover/50",
                   )
                 }
               >
-                <Icon className="w-5 h-5" />
-                <span>{label}</span>
+                <div
+                  className={clsx(
+                    "w-12 h-12 rounded flex items-center justify-center flex-shrink-0",
+                    playlist.id === "favorites"
+                      ? "bg-gradient-to-br from-purple-700 to-blue-300"
+                      : "bg-amoled-card",
+                  )}
+                >
+                  {playlist.id === "favorites" ? (
+                    <HeartFilledIcon className="w-6 h-6 text-white" />
+                  ) : (
+                    <span className="text-2xl">
+                      {playlist.icon === "sparkles"
+                        ? "✨"
+                        : playlist.icon === "audio"
+                          ? "🎵"
+                          : "📋"}
+                    </span>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-text-primary truncate">
+                    {playlist.name}
+                  </p>
+                  <div className="flex items-center gap-1 text-xs text-text-secondary">
+                    <PinIcon className="w-3 h-3 text-[#1DB954]" />
+                    <span>Playlist</span>
+                    <span>•</span>
+                    <span>{playlist.track_count} songs</span>
+                  </div>
+                </div>
               </NavLink>
             ))}
-          </div>
+
+          {/* Display based on filter */}
+          {activeFilter === "artists"
+            ? // Artists list
+              filteredItems().map((artist: any) => (
+                <NavLink
+                  key={artist.id}
+                  to={`/artists/${encodeURIComponent(artist.name)}`}
+                  className={({ isActive }) =>
+                    clsx(
+                      "flex items-center gap-3 p-2 rounded-md transition-colors group",
+                      isActive ? "bg-amoled-hover" : "hover:bg-amoled-hover/50",
+                    )
+                  }
+                >
+                  <div className="w-12 h-12 rounded-full bg-amoled-card flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    <span className="text-xl text-text-muted">🎤</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-text-primary truncate">
+                      {artist.name}
+                    </p>
+                    <p className="text-xs text-text-secondary">Artist</p>
+                  </div>
+                </NavLink>
+              ))
+            : activeFilter === "albums"
+              ? // Albums list
+                filteredItems().map((album: any) => (
+                  <div
+                    key={`${album.name}-${album.artist}`}
+                    onClick={() =>
+                      navigate(
+                        `/albums/${encodeURIComponent(
+                          album.name,
+                        )}/${encodeURIComponent(album.artist)}`,
+                      )
+                    }
+                    className="flex items-center gap-3 p-2 rounded-md transition-colors cursor-pointer hover:bg-amoled-hover/50"
+                  >
+                    <div className="w-12 h-12 rounded bg-amoled-card flex items-center justify-center flex-shrink-0 overflow-hidden">
+                      <span className="text-xl text-text-muted">💿</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-text-primary truncate">
+                        {album.name}
+                      </p>
+                      <p className="text-xs text-text-secondary truncate">
+                        Album • {album.artist}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              : // Recent albums (default)
+                filteredItems().map((track: any) => {
+                  const key = `${track.album}-${track.artist}`;
+                  return (
+                    <div
+                      key={key}
+                      onClick={() => handlePlayAlbum(track.album, track.artist)}
+                      className="flex items-center gap-3 p-2 rounded-md transition-colors cursor-pointer hover:bg-amoled-hover/50"
+                    >
+                      <div className="w-12 h-12 rounded bg-amoled-card flex-shrink-0 overflow-hidden">
+                        <AlbumArt
+                          src={albumArtworks[key]}
+                          alt={track.album}
+                          size="sm"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-text-primary truncate">
+                          {track.album}
+                        </p>
+                        <p className="text-xs text-text-secondary truncate">
+                          Album • {track.artist}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+
+          {/* Empty State */}
+          {filteredItems().length === 0 && (
+            <div className="text-center py-8 text-text-muted text-sm">
+              {searchQuery
+                ? "No results found"
+                : "Your library is empty. Add some music!"}
+            </div>
+          )}
         </div>
-      </nav>
+      </div>
 
       {/* Bottom padding for player bar */}
-      <div className="h-24" />
+      <div className="h-20" />
     </aside>
   );
 }
