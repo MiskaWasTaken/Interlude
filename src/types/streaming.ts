@@ -50,9 +50,49 @@ export interface StreamInfo {
   source: StreamSource;
 }
 
+export interface DownloadResult {
+  success: boolean;
+  file_path: string | null;
+  error: string | null;
+  source: string;
+  format: string;
+  sample_rate: number | null;
+  bit_depth: number | null;
+}
+
+// Progressive streaming types
+export interface ProgressiveStreamResult {
+  success: boolean;
+  first_chunk_path: string | null;
+  total_chunks: number;
+  error: string | null;
+  source: string;
+  format: string;
+  sample_rate: number | null;
+  bit_depth: number | null;
+}
+
+export interface NextChunkResult {
+  chunk_path: string | null;
+  chunk_index: number;
+  is_last: boolean;
+  is_ready: boolean;
+}
+
+export interface TrackMetadata {
+  name: string;
+  artist: string;
+  album: string;
+}
+
 export interface StreamingPreferences {
   prefer_hires: boolean;
   service_order: string[];
+}
+
+export interface SpotifyCredentials {
+  client_id: string;
+  client_secret: string;
 }
 
 // Helper functions

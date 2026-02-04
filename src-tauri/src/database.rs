@@ -1,9 +1,9 @@
 //! Database Module
 //! SQLite-based storage for library metadata
 
-use rusqlite::{Connection, Result, params};
+use rusqlite::{params, Connection, Result};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
@@ -81,7 +81,8 @@ impl Database {
     }
 
     fn initialize(&self) -> Result<()> {
-        self.conn.execute_batch(r#"
+        self.conn.execute_batch(
+            r#"
             CREATE TABLE IF NOT EXISTS tracks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_path TEXT UNIQUE NOT NULL,
@@ -136,7 +137,8 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_tracks_file_hash ON tracks(file_hash);
             CREATE INDEX IF NOT EXISTS idx_play_history_track ON play_history(track_id);
             CREATE INDEX IF NOT EXISTS idx_play_history_date ON play_history(played_at);
-        "#)?;
+        "#,
+        )?;
         Ok(())
     }
 
@@ -173,10 +175,10 @@ impl Database {
     }
 
     pub fn get_all_tracks(&self) -> Result<Vec<Track>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT * FROM tracks ORDER BY artist, album, disc_number, track_number"
-        )?;
-        
+        let mut stmt = self
+            .conn
+            .prepare("SELECT * FROM tracks ORDER BY artist, album, disc_number, track_number")?;
+
         let tracks = stmt.query_map([], |row| {
             Ok(Track {
                 id: row.get(0)?,
@@ -208,7 +210,8 @@ impl Database {
     }
 
     pub fn get_all_albums(&self) -> Result<Vec<Album>> {
-        let mut stmt = self.conn.prepare(r#"
+        let mut stmt = self.conn.prepare(
+            r#"
             SELECT 
                 ROW_NUMBER() OVER (ORDER BY album, artist) as id,
                 album as name,
@@ -219,7 +222,8 @@ impl Database {
             FROM tracks
             GROUP BY album, artist
             ORDER BY album
-        "#)?;
+        "#,
+        )?;
 
         let albums = stmt.query_map([], |row| {
             Ok(Album {
@@ -237,7 +241,8 @@ impl Database {
     }
 
     pub fn get_all_artists(&self) -> Result<Vec<Artist>> {
-        let mut stmt = self.conn.prepare(r#"
+        let mut stmt = self.conn.prepare(
+            r#"
             SELECT 
                 ROW_NUMBER() OVER (ORDER BY artist) as id,
                 artist as name,
@@ -246,7 +251,8 @@ impl Database {
             FROM tracks
             GROUP BY artist
             ORDER BY artist
-        "#)?;
+        "#,
+        )?;
 
         let artists = stmt.query_map([], |row| {
             Ok(Artist {
@@ -264,7 +270,7 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT * FROM tracks WHERE album = ?1 AND artist = ?2 ORDER BY disc_number, track_number"
         )?;
-        
+
         let tracks = stmt.query_map(params![album, artist], |row| {
             Ok(Track {
                 id: row.get(0)?,
@@ -296,7 +302,8 @@ impl Database {
     }
 
     pub fn get_artist_albums(&self, artist: &str) -> Result<Vec<Album>> {
-        let mut stmt = self.conn.prepare(r#"
+        let mut stmt = self.conn.prepare(
+            r#"
             SELECT 
                 ROW_NUMBER() OVER (ORDER BY album) as id,
                 album as name,
@@ -308,7 +315,8 @@ impl Database {
             WHERE artist = ?1
             GROUP BY album
             ORDER BY year DESC, album
-        "#)?;
+        "#,
+        )?;
 
         let albums = stmt.query_map(params![artist], |row| {
             Ok(Album {
@@ -334,10 +342,8 @@ impl Database {
     }
 
     pub fn remove_library_folder(&self, path: &str) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM library_folders WHERE path = ?1",
-            params![path],
-        )?;
+        self.conn
+            .execute("DELETE FROM library_folders WHERE path = ?1", params![path])?;
         // Also remove tracks from this folder
         self.conn.execute(
             "DELETE FROM tracks WHERE file_path LIKE ?1 || '%'",
@@ -346,9 +352,17 @@ impl Database {
         Ok(())
     }
 
+    pub fn clear_all_tracks(&self) -> Result<usize> {
+        // Clear all tracks, play history, and favorites
+        self.conn.execute("DELETE FROM play_history", [])?;
+        self.conn.execute("DELETE FROM favorites", [])?;
+        let count = self.conn.execute("DELETE FROM tracks", [])?;
+        Ok(count)
+    }
+
     pub fn get_library_folders(&self) -> Result<Vec<LibraryFolder>> {
         let mut stmt = self.conn.prepare("SELECT * FROM library_folders")?;
-        
+
         let folders = stmt.query_map([], |row| {
             Ok(LibraryFolder {
                 id: row.get(0)?,
@@ -382,14 +396,16 @@ impl Database {
     }
 
     pub fn get_recently_played(&self, limit: i32) -> Result<Vec<Track>> {
-        let mut stmt = self.conn.prepare(r#"
+        let mut stmt = self.conn.prepare(
+            r#"
             SELECT t.* FROM tracks t
             INNER JOIN play_history h ON t.id = h.track_id
             GROUP BY t.id
             ORDER BY MAX(h.played_at) DESC
             LIMIT ?1
-        "#)?;
-        
+        "#,
+        )?;
+
         let tracks = stmt.query_map(params![limit], |row| {
             Ok(Track {
                 id: row.get(0)?,
@@ -430,9 +446,9 @@ impl Database {
 
     pub fn get_favorites(&self) -> Result<Vec<Track>> {
         let mut stmt = self.conn.prepare(
-            "SELECT * FROM tracks WHERE is_favorite = 1 ORDER BY artist, album, track_number"
+            "SELECT * FROM tracks WHERE is_favorite = 1 ORDER BY artist, album, track_number",
         )?;
-        
+
         let tracks = stmt.query_map([], |row| {
             Ok(Track {
                 id: row.get(0)?,
@@ -464,7 +480,8 @@ impl Database {
     }
 
     pub fn get_statistics(&self) -> Result<Statistics> {
-        let mut stmt = self.conn.prepare(r#"
+        let mut stmt = self.conn.prepare(
+            r#"
             SELECT 
                 COUNT(*) as total_tracks,
                 COUNT(DISTINCT album || artist) as total_albums,
@@ -473,7 +490,8 @@ impl Database {
                 COALESCE(SUM(file_size), 0) as total_size,
                 COALESCE(SUM(CASE WHEN bit_depth >= 24 THEN 1 ELSE 0 END), 0) as hires_tracks
             FROM tracks
-        "#)?;
+        "#,
+        )?;
 
         stmt.query_row([], |row| {
             Ok(Statistics {
@@ -489,7 +507,8 @@ impl Database {
 
     pub fn search(&self, query: &str) -> Result<Vec<Track>> {
         let search_term = format!("%{}%", query);
-        let mut stmt = self.conn.prepare(r#"
+        let mut stmt = self.conn.prepare(
+            r#"
             SELECT * FROM tracks 
             WHERE title LIKE ?1 OR artist LIKE ?1 OR album LIKE ?1
             ORDER BY 
@@ -500,8 +519,9 @@ impl Database {
                 END,
                 artist, album, track_number
             LIMIT 100
-        "#)?;
-        
+        "#,
+        )?;
+
         let tracks = stmt.query_map(params![search_term], |row| {
             Ok(Track {
                 id: row.get(0)?,
@@ -533,8 +553,10 @@ impl Database {
     }
 
     pub fn get_track_by_path(&self, path: &str) -> Result<Option<Track>> {
-        let mut stmt = self.conn.prepare("SELECT * FROM tracks WHERE file_path = ?1")?;
-        
+        let mut stmt = self
+            .conn
+            .prepare("SELECT * FROM tracks WHERE file_path = ?1")?;
+
         let result = stmt.query_row(params![path], |row| {
             Ok(Track {
                 id: row.get(0)?,
@@ -570,7 +592,9 @@ impl Database {
     }
 
     pub fn track_exists(&self, file_hash: &str) -> Result<bool> {
-        let mut stmt = self.conn.prepare("SELECT 1 FROM tracks WHERE file_hash = ?1 LIMIT 1")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT 1 FROM tracks WHERE file_hash = ?1 LIMIT 1")?;
         let exists = stmt.exists(params![file_hash])?;
         Ok(exists)
     }
@@ -584,8 +608,10 @@ impl Database {
     }
 
     pub fn get_lyrics(&self, track_id: i64) -> Result<Option<(String, bool)>> {
-        let mut stmt = self.conn.prepare("SELECT content, is_synced FROM lyrics WHERE track_id = ?1")?;
-        
+        let mut stmt = self
+            .conn
+            .prepare("SELECT content, is_synced FROM lyrics WHERE track_id = ?1")?;
+
         let result = stmt.query_row(params![track_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)? != 0))
         });
@@ -599,9 +625,9 @@ impl Database {
 
     pub fn get_hires_tracks(&self) -> Result<Vec<Track>> {
         let mut stmt = self.conn.prepare(
-            "SELECT * FROM tracks WHERE bit_depth >= 24 ORDER BY artist, album, track_number"
+            "SELECT * FROM tracks WHERE bit_depth >= 24 ORDER BY artist, album, track_number",
         )?;
-        
+
         let tracks = stmt.query_map([], |row| {
             Ok(Track {
                 id: row.get(0)?,
@@ -633,10 +659,10 @@ impl Database {
     }
 
     pub fn get_recently_added(&self, limit: i32) -> Result<Vec<Track>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT * FROM tracks ORDER BY date_added DESC LIMIT ?1"
-        )?;
-        
+        let mut stmt = self
+            .conn
+            .prepare("SELECT * FROM tracks ORDER BY date_added DESC LIMIT ?1")?;
+
         let tracks = stmt.query_map(params![limit], |row| {
             Ok(Track {
                 id: row.get(0)?,

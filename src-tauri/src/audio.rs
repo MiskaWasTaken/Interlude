@@ -4,6 +4,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::StreamConfig;
 use parking_lot::RwLock;
+use rubato::{FftFixedIn, Resampler};
 use std::path::Path;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -46,6 +47,7 @@ pub struct PlaybackState {
     pub channels: u16,
     pub shuffle: bool,
     pub repeat_mode: RepeatMode,
+    pub track_finished: bool, // Set to true when playback reaches end of track
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -61,8 +63,10 @@ impl Default for RepeatMode {
     }
 }
 
+#[allow(dead_code)]
 pub enum AudioCommand {
     Play(String),
+    AppendSamples(String), // Append audio from file to current buffer (for gapless)
     Pause,
     Resume,
     Stop,
@@ -74,6 +78,7 @@ pub enum AudioCommand {
 
 /// Thread-safe audio engine that delegates actual playback to a dedicated thread
 /// This is necessary because cpal::Stream is not Send/Sync
+#[allow(dead_code)]
 pub struct AudioEngine {
     state: Arc<RwLock<PlaybackState>>,
     command_tx: mpsc::Sender<AudioCommand>,
@@ -99,6 +104,7 @@ impl AudioEngine {
             channels: 2,
             shuffle: false,
             repeat_mode: RepeatMode::Off,
+            track_finished: false,
         }));
 
         let sample_buffer = Arc::new(RwLock::new(Vec::new()));
@@ -153,6 +159,14 @@ impl AudioEngine {
         Ok(())
     }
 
+    /// Append audio samples from a file to the current buffer (for gapless playback)
+    pub fn append_samples(&mut self, file_path: &str) -> Result<(), AudioError> {
+        self.command_tx
+            .send(AudioCommand::AppendSamples(file_path.to_string()))
+            .map_err(|_| AudioError::HostInit)?;
+        Ok(())
+    }
+
     pub fn pause(&mut self) {
         let _ = self.command_tx.send(AudioCommand::Pause);
     }
@@ -187,6 +201,7 @@ impl AudioEngine {
 }
 
 /// Internal audio thread that owns the non-Send cpal::Stream
+#[allow(dead_code)]
 struct AudioThread {
     host: cpal::Host,
     device: Option<cpal::Device>,
@@ -196,6 +211,8 @@ struct AudioThread {
     buffer_position: Arc<RwLock<usize>>,
     device_list: Arc<RwLock<Vec<String>>>,
     command_rx: mpsc::Receiver<AudioCommand>,
+    output_sample_rate: Option<u32>, // The sample rate the stream is outputting at
+    output_channels: Option<u16>,    // The channel count the stream is outputting
 }
 
 impl AudioThread {
@@ -231,6 +248,8 @@ impl AudioThread {
             buffer_position,
             device_list,
             command_rx,
+            output_sample_rate: None,
+            output_channels: None,
         }
     }
 
@@ -240,6 +259,11 @@ impl AudioThread {
                 Ok(AudioCommand::Play(path)) => {
                     if let Err(e) = self.play_internal(&path) {
                         log::error!("Playback error: {}", e);
+                    }
+                }
+                Ok(AudioCommand::AppendSamples(path)) => {
+                    if let Err(e) = self.append_samples_internal(&path) {
+                        log::error!("Append samples error: {}", e);
                     }
                 }
                 Ok(AudioCommand::Pause) => {
@@ -342,6 +366,14 @@ impl AudioThread {
             .unwrap_or(2);
         let bit_depth = track.codec_params.bits_per_sample.unwrap_or(16) as u16;
 
+        log::info!(
+            "Decoded audio: {}Hz, {} channels, {}-bit, codec: {:?}",
+            sample_rate,
+            channels,
+            bit_depth,
+            track.codec_params.codec
+        );
+
         // Calculate duration
         let duration = track
             .codec_params
@@ -414,23 +446,7 @@ impl AudioThread {
             }
         }
 
-        // Store samples
-        *self.sample_buffer.write() = samples;
-        *self.buffer_position.write() = 0;
-
-        // Update state
-        {
-            let mut state = self.state.write();
-            state.current_track = Some(file_path.to_string());
-            state.duration = duration;
-            state.position = 0.0;
-            state.sample_rate = sample_rate;
-            state.bit_depth = bit_depth;
-            state.channels = channels;
-            state.is_playing = true;
-        }
-
-        // Create output stream
+        // Create output stream first to determine output sample rate
         let device = self
             .device
             .as_ref()
@@ -438,17 +454,170 @@ impl AudioThread {
             .or_else(|| self.host.default_output_device())
             .ok_or(AudioError::NoDevice)?;
 
-        let config = StreamConfig {
-            channels,
-            sample_rate: cpal::SampleRate(sample_rate),
-            buffer_size: cpal::BufferSize::Default,
+        // Log device name
+        if let Ok(name) = device.name() {
+            log::info!("[Audio] Device: {}", name);
+            println!("[Audio] Device: {}", name);
+        }
+
+        // Find the best supported configuration - prioritize EXACT match first, then highest quality
+        // ONLY resample when absolutely necessary
+        let config = {
+            let supported_configs: Vec<_> = device
+                .supported_output_configs()
+                .map_err(|e| AudioError::DeviceConfig(e.to_string()))?
+                .collect();
+
+            // Log ALL supported configurations for debugging
+            println!("=== Device Supported Configurations ===");
+            for (i, cfg) in supported_configs.iter().enumerate() {
+                println!(
+                    "  Config {}: {}ch, {}-{}Hz, {:?}",
+                    i,
+                    cfg.channels(),
+                    cfg.min_sample_rate().0,
+                    cfg.max_sample_rate().0,
+                    cfg.sample_format()
+                );
+            }
+            println!("=== End Device Configs ===");
+            println!(
+                "[Audio] Source audio: {}Hz, {} channels",
+                sample_rate, channels
+            );
+
+            // First, try to find exact match for file's sample rate and channels
+            let exact_match = supported_configs.iter().find(|c| {
+                c.channels() == channels
+                    && c.min_sample_rate().0 <= sample_rate
+                    && c.max_sample_rate().0 >= sample_rate
+            });
+
+            if let Some(_config_range) = exact_match {
+                // Use the file's exact sample rate - NO RESAMPLING NEEDED
+                println!(
+                    "[Audio] ✓ EXACT MATCH: Device supports {}Hz/{}ch - NO resampling!",
+                    sample_rate, channels
+                );
+                StreamConfig {
+                    channels,
+                    sample_rate: cpal::SampleRate(sample_rate),
+                    buffer_size: cpal::BufferSize::Default,
+                }
+            } else {
+                // Try with 2 channels if file has different channel count
+                let stereo_match = supported_configs.iter().find(|c| {
+                    c.channels() == 2
+                        && c.min_sample_rate().0 <= sample_rate
+                        && c.max_sample_rate().0 >= sample_rate
+                });
+
+                if let Some(_config_range) = stereo_match {
+                    println!(
+                        "[Audio] ✓ Sample rate match with stereo: {}Hz/2ch",
+                        sample_rate
+                    );
+                    StreamConfig {
+                        channels: 2,
+                        sample_rate: cpal::SampleRate(sample_rate),
+                        buffer_size: cpal::BufferSize::Default,
+                    }
+                } else {
+                    // No exact sample rate match - find the HIGHEST rate the device supports
+                    let best_config = supported_configs
+                        .iter()
+                        .filter(|c| c.channels() == channels || c.channels() == 2)
+                        .max_by_key(|c| c.max_sample_rate().0);
+
+                    if let Some(config_range) = best_config {
+                        let best_rate = config_range.max_sample_rate().0;
+                        let best_channels = config_range.channels();
+                        println!(
+                            "[Audio] ✗ RESAMPLING NEEDED: {}Hz -> {}Hz (device max: {}Hz/{}ch)",
+                            sample_rate, best_rate, best_rate, best_channels
+                        );
+                        StreamConfig {
+                            channels: best_channels,
+                            sample_rate: cpal::SampleRate(best_rate),
+                            buffer_size: cpal::BufferSize::Default,
+                        }
+                    } else {
+                        // Last resort: use device default
+                        println!("[Audio] No suitable config, using device default");
+                        let default_config = device
+                            .default_output_config()
+                            .map_err(|e| AudioError::DeviceConfig(e.to_string()))?;
+                        StreamConfig {
+                            channels: default_config.channels(),
+                            sample_rate: default_config.sample_rate(),
+                            buffer_size: cpal::BufferSize::Default,
+                        }
+                    }
+                }
+            }
         };
+
+        let output_sample_rate = config.sample_rate.0;
+        let output_channels = config.channels;
+
+        // Store the output format for use by append_samples
+        self.output_sample_rate = Some(output_sample_rate);
+        self.output_channels = Some(output_channels);
+
+        println!(
+            "[Audio] Final: Source {}Hz/{}ch -> Output {}Hz/{}ch",
+            sample_rate, channels, output_sample_rate, output_channels
+        );
+
+        // Resample if sample rates differ
+        let final_samples = if sample_rate != output_sample_rate {
+            println!(
+                "[Audio] ⚡ RESAMPLING: {}Hz -> {}Hz",
+                sample_rate, output_sample_rate
+            );
+            resample_audio(&samples, channels as usize, sample_rate, output_sample_rate)?
+        } else {
+            println!("[Audio] ✓ NO RESAMPLING NEEDED ({}Hz)", sample_rate);
+            samples
+        };
+
+        // Handle channel conversion if needed
+        let final_samples = if channels != output_channels {
+            println!(
+                "[Audio] Converting channels: {}ch -> {}ch",
+                channels, output_channels
+            );
+            convert_channels(&final_samples, channels as usize, output_channels as usize)
+        } else {
+            final_samples
+        };
+
+        // Calculate duration based on resampled audio
+        let resampled_duration =
+            final_samples.len() as f64 / (output_sample_rate as f64 * output_channels as f64);
+
+        // Store samples
+        *self.sample_buffer.write() = final_samples;
+        *self.buffer_position.write() = 0;
+
+        // Update state
+        {
+            let mut state = self.state.write();
+            state.current_track = Some(file_path.to_string());
+            state.duration = resampled_duration;
+            state.position = 0.0;
+            state.sample_rate = output_sample_rate;
+            state.bit_depth = bit_depth;
+            state.channels = output_channels;
+            state.is_playing = true;
+            state.track_finished = false;
+        }
 
         let sample_buffer = Arc::clone(&self.sample_buffer);
         let buffer_position = Arc::clone(&self.buffer_position);
         let state = Arc::clone(&self.state);
-        let channel_count = channels as usize;
-        let sr = sample_rate;
+        let channel_count = output_channels as usize;
+        let sr = output_sample_rate;
 
         let stream = device
             .build_output_stream(
@@ -459,7 +628,10 @@ impl AudioThread {
                     let state_read = state.read();
                     let volume = state_read.volume;
                     let is_playing = state_read.is_playing;
+                    let was_playing = is_playing;
                     drop(state_read);
+
+                    let mut finished_this_frame = false;
 
                     for sample in data.iter_mut() {
                         if is_playing && *pos < buffer.len() {
@@ -467,13 +639,26 @@ impl AudioThread {
                             *pos += 1;
                         } else {
                             *sample = 0.0;
+                            // Detect when we've reached the end of the buffer
+                            if was_playing && *pos >= buffer.len() && !buffer.is_empty() {
+                                finished_this_frame = true;
+                            }
                         }
                     }
 
                     // Update position in state
                     let current_pos = *pos as f64 / (sr as f64 * channel_count as f64);
                     drop(pos);
-                    state.write().position = current_pos;
+
+                    let mut state_write = state.write();
+                    state_write.position = current_pos;
+
+                    // Set track_finished flag when playback reaches end
+                    if finished_this_frame && !state_write.track_finished {
+                        state_write.track_finished = true;
+                        state_write.is_playing = false;
+                        log::info!("Track playback finished");
+                    }
                 },
                 |err| {
                     log::error!("Audio stream error: {}", err);
@@ -489,4 +674,345 @@ impl AudioThread {
 
         Ok(())
     }
+
+    /// Append samples from a file to the existing buffer (for gapless chunk transitions)
+    fn append_samples_internal(&mut self, file_path: &str) -> Result<(), AudioError> {
+        let path = Path::new(file_path);
+        if !path.exists() {
+            return Err(AudioError::FileNotFound(file_path.to_string()));
+        }
+
+        // Get the output format we need to resample to
+        let output_sample_rate = self.output_sample_rate.ok_or_else(|| {
+            AudioError::Decode(
+                "No output sample rate set - play_internal must be called first".to_string(),
+            )
+        })?;
+        let output_channels = self.output_channels.ok_or_else(|| {
+            AudioError::Decode(
+                "No output channels set - play_internal must be called first".to_string(),
+            )
+        })?;
+
+        log::info!("Appending samples from: {}", file_path);
+
+        // Open and decode the file
+        let file =
+            std::fs::File::open(path).map_err(|e| AudioError::FileNotFound(e.to_string()))?;
+
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+        let mut hint = Hint::new();
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+
+        let format_opts = FormatOptions::default();
+        let metadata_opts = MetadataOptions::default();
+        let probed = symphonia::default::get_probe()
+            .format(&hint, mss, &format_opts, &metadata_opts)
+            .map_err(|e| AudioError::Decode(e.to_string()))?;
+
+        let mut format = probed.format;
+
+        let track = format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+            .ok_or(AudioError::UnsupportedFormat)?;
+
+        let track_id = track.id;
+
+        // Extract source sample rate and channels from the file
+        let source_sample_rate = track.codec_params.sample_rate.unwrap_or(output_sample_rate);
+        let source_channels = track
+            .codec_params
+            .channels
+            .map(|c| c.count() as u16)
+            .unwrap_or(output_channels);
+
+        println!(
+            "[Audio] Chunk: {}Hz/{}ch -> Output: {}Hz/{}ch",
+            source_sample_rate, source_channels, output_sample_rate, output_channels
+        );
+
+        let dec_opts = DecoderOptions::default();
+        let mut decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &dec_opts)
+            .map_err(|e| AudioError::Decode(e.to_string()))?;
+
+        // Decode all samples
+        let mut new_samples: Vec<f32> = Vec::new();
+
+        loop {
+            let packet = match format.next_packet() {
+                Ok(packet) => packet,
+                Err(symphonia::core::errors::Error::IoError(_)) => break,
+                Err(e) => {
+                    log::warn!("Error reading packet: {}", e);
+                    break;
+                }
+            };
+
+            if packet.track_id() != track_id {
+                continue;
+            }
+
+            match decoder.decode(&packet) {
+                Ok(decoded) => match decoded {
+                    AudioBufferRef::F32(buf) => {
+                        for frame in 0..buf.frames() {
+                            for ch in 0..buf.spec().channels.count() {
+                                new_samples.push(buf.chan(ch)[frame]);
+                            }
+                        }
+                    }
+                    AudioBufferRef::S16(buf) => {
+                        for frame in 0..buf.frames() {
+                            for ch in 0..buf.spec().channels.count() {
+                                new_samples.push(buf.chan(ch)[frame] as f32 / 32768.0);
+                            }
+                        }
+                    }
+                    AudioBufferRef::S24(buf) => {
+                        for frame in 0..buf.frames() {
+                            for ch in 0..buf.spec().channels.count() {
+                                let sample = buf.chan(ch)[frame].0;
+                                new_samples.push(sample as f32 / 8388608.0);
+                            }
+                        }
+                    }
+                    AudioBufferRef::S32(buf) => {
+                        for frame in 0..buf.frames() {
+                            for ch in 0..buf.spec().channels.count() {
+                                new_samples.push(buf.chan(ch)[frame] as f32 / 2147483648.0);
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                Err(e) => {
+                    log::warn!("Decode error: {}", e);
+                }
+            }
+        }
+
+        println!(
+            "[Audio] Chunk decoded: {} samples at {}Hz",
+            new_samples.len(),
+            source_sample_rate
+        );
+
+        // Resample if source sample rate differs from output sample rate
+        let resampled_samples = if source_sample_rate != output_sample_rate {
+            println!(
+                "[Audio] ⚡ RESAMPLING CHUNK: {}Hz -> {}Hz",
+                source_sample_rate, output_sample_rate
+            );
+            resample_audio(
+                &new_samples,
+                source_channels as usize,
+                source_sample_rate,
+                output_sample_rate,
+            )?
+        } else {
+            println!(
+                "[Audio] ✓ CHUNK NO RESAMPLE: {}Hz matches output",
+                source_sample_rate
+            );
+            new_samples
+        };
+
+        // Convert channels if needed
+        let final_samples = if source_channels != output_channels {
+            println!(
+                "[Audio] Converting chunk channels: {}ch -> {}ch",
+                source_channels, output_channels
+            );
+            convert_channels(
+                &resampled_samples,
+                source_channels as usize,
+                output_channels as usize,
+            )
+        } else {
+            resampled_samples
+        };
+
+        // Append to existing buffer
+        {
+            let mut buffer = self.sample_buffer.write();
+            let old_len = buffer.len();
+            buffer.extend(final_samples.iter());
+            println!(
+                "[Audio] Appended {} samples (buffer: {} -> {})",
+                final_samples.len(),
+                old_len,
+                buffer.len()
+            );
+        }
+
+        // Update duration in state
+        {
+            let buffer = self.sample_buffer.read();
+            let new_duration =
+                buffer.len() as f64 / (output_sample_rate as f64 * output_channels as f64);
+            drop(buffer);
+
+            let mut state = self.state.write();
+            state.duration = new_duration;
+            // Reset track_finished flag since we have more audio
+            state.track_finished = false;
+            state.is_playing = true;
+        }
+
+        Ok(())
+    }
+}
+/// Resample audio from one sample rate to another using high-quality sinc interpolation
+fn resample_audio(
+    samples: &[f32],
+    channels: usize,
+    from_rate: u32,
+    to_rate: u32,
+) -> Result<Vec<f32>, AudioError> {
+    if channels == 0 || samples.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let num_frames = samples.len() / channels;
+
+    // Deinterleave samples into separate channels
+    let mut channel_data: Vec<Vec<f32>> = vec![Vec::with_capacity(num_frames); channels];
+    for (i, sample) in samples.iter().enumerate() {
+        channel_data[i % channels].push(*sample);
+    }
+
+    // Create resampler
+    let mut resampler = FftFixedIn::<f32>::new(
+        from_rate as usize,
+        to_rate as usize,
+        1024, // chunk size
+        2,    // sub chunks
+        channels,
+    )
+    .map_err(|e| AudioError::Decode(format!("Failed to create resampler: {}", e)))?;
+
+    // Process in chunks
+    let chunk_size = resampler.input_frames_next();
+    let mut resampled_channels: Vec<Vec<f32>> = vec![Vec::new(); channels];
+
+    let mut pos = 0;
+    while pos < num_frames {
+        let end = (pos + chunk_size).min(num_frames);
+        let frames_in_chunk = end - pos;
+
+        // Prepare input chunk (pad with zeros if needed)
+        let input: Vec<Vec<f32>> = channel_data
+            .iter()
+            .map(|ch| {
+                let mut chunk: Vec<f32> = ch[pos..end].to_vec();
+                // Pad with zeros if this is the last chunk and it's smaller than chunk_size
+                while chunk.len() < chunk_size {
+                    chunk.push(0.0);
+                }
+                chunk
+            })
+            .collect();
+
+        // Resample
+        match resampler.process(&input, None) {
+            Ok(output) => {
+                for (ch_idx, ch_data) in output.into_iter().enumerate() {
+                    resampled_channels[ch_idx].extend(ch_data);
+                }
+            }
+            Err(e) => {
+                log::warn!("Resampling error at frame {}: {}", pos, e);
+            }
+        }
+
+        pos += frames_in_chunk;
+    }
+
+    // Interleave resampled channels back together
+    let output_frames = resampled_channels.get(0).map(|c| c.len()).unwrap_or(0);
+    let mut result = Vec::with_capacity(output_frames * channels);
+
+    for frame in 0..output_frames {
+        for ch in 0..channels {
+            if frame < resampled_channels[ch].len() {
+                result.push(resampled_channels[ch][frame]);
+            } else {
+                result.push(0.0);
+            }
+        }
+    }
+
+    log::info!(
+        "Resampled {} frames from {}Hz to {}Hz -> {} frames",
+        num_frames,
+        from_rate,
+        to_rate,
+        output_frames
+    );
+
+    Ok(result)
+}
+
+/// Convert audio between different channel counts
+fn convert_channels(samples: &[f32], from_channels: usize, to_channels: usize) -> Vec<f32> {
+    if from_channels == to_channels || from_channels == 0 {
+        return samples.to_vec();
+    }
+
+    let num_frames = samples.len() / from_channels;
+    let mut result = Vec::with_capacity(num_frames * to_channels);
+
+    for frame in 0..num_frames {
+        let frame_start = frame * from_channels;
+
+        if to_channels < from_channels {
+            // Downmix: average channels
+            if to_channels == 1 && from_channels == 2 {
+                // Stereo to mono
+                let left = samples[frame_start];
+                let right = samples[frame_start + 1];
+                result.push((left + right) / 2.0);
+            } else if to_channels == 2 && from_channels > 2 {
+                // Multi-channel to stereo (simple downmix)
+                let left = samples[frame_start];
+                let right = if from_channels > 1 {
+                    samples[frame_start + 1]
+                } else {
+                    left
+                };
+                result.push(left);
+                result.push(right);
+            } else {
+                // Generic downmix: take first to_channels
+                for ch in 0..to_channels {
+                    result.push(samples[frame_start + ch]);
+                }
+            }
+        } else {
+            // Upmix: duplicate channels
+            if from_channels == 1 && to_channels == 2 {
+                // Mono to stereo
+                let mono = samples[frame_start];
+                result.push(mono);
+                result.push(mono);
+            } else {
+                // Generic upmix: copy existing, fill rest with zeros
+                for ch in 0..to_channels {
+                    if ch < from_channels {
+                        result.push(samples[frame_start + ch]);
+                    } else {
+                        result.push(0.0);
+                    }
+                }
+            }
+        }
+    }
+
+    result
 }

@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useEffect } from "react";
 import Layout from "./components/layout/Layout";
+import ProtectedRoute from "./components/ProtectedRoute";
 import HomePage from "./pages/HomePage";
 import AlbumsPage from "./pages/AlbumsPage";
 import ArtistsPage from "./pages/ArtistsPage";
@@ -11,8 +13,12 @@ import SearchPage from "./pages/SearchPage";
 import SettingsPage from "./pages/SettingsPage";
 import StatisticsPage from "./pages/StatisticsPage";
 import SmartPlaylistPage from "./pages/SmartPlaylistPage";
-import SpotiFlacPage from "./pages/SpotiFlacPage";
+import AuthPage from "./pages/AuthPage";
+import AuthCallbackPage from "./pages/AuthCallbackPage";
+import AdminInviteCodesPage from "./pages/AdminInviteCodesPage";
+import ProfileSettingsPage from "./pages/ProfileSettingsPage";
 import { GradientProvider } from "./contexts/GradientContext";
+import { useAuthStore } from "./stores/authStore";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,12 +30,40 @@ const queryClient = new QueryClient({
 });
 
 function App() {
+  const initialize = useAuthStore((state) => state.initialize);
+
+  useEffect(() => {
+    initialize();
+  }, [initialize]);
+
   return (
     <QueryClientProvider client={queryClient}>
       <GradientProvider>
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<Layout />}>
+            {/* Auth routes - outside of Layout */}
+            <Route path="/auth" element={<AuthPage />} />
+            <Route path="/auth/callback" element={<AuthCallbackPage />} />
+
+            {/* Protected routes */}
+            <Route
+              path="/admin/invite-codes"
+              element={
+                <ProtectedRoute>
+                  <AdminInviteCodesPage />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Main app routes - all protected */}
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <Layout />
+                </ProtectedRoute>
+              }
+            >
               <Route index element={<HomePage />} />
               <Route path="albums" element={<AlbumsPage />} />
               <Route
@@ -44,12 +78,12 @@ function App() {
               <Route path="library" element={<LibraryPage />} />
               <Route path="search" element={<SearchPage />} />
               <Route path="settings" element={<SettingsPage />} />
+              <Route path="profile" element={<ProfileSettingsPage />} />
               <Route path="statistics" element={<StatisticsPage />} />
               <Route
                 path="playlist/:playlistId"
                 element={<SmartPlaylistPage />}
               />
-              <Route path="spotiflac" element={<SpotiFlacPage />} />
             </Route>
           </Routes>
         </BrowserRouter>

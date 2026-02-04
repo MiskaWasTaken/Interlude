@@ -6,7 +6,7 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "HiFlac",
+    "productName": "Interlude",
     "version": "1.0.0"
   },
   "tauri": {
@@ -46,7 +46,7 @@
     "bundle": {
       "active": true,
       "category": "Music",
-      "copyright": "© 2024 HiFlac",
+      "copyright": "© 2024 Interlude",
       "deb": {
         "depends": []
       },
@@ -58,7 +58,7 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ],
-      "identifier": "com.hiflac.app",
+      "identifier": "com.interlude.app",
       "longDescription": "A high-resolution audio player with Spotify-style UX",
       "macOS": {
         "entitlements": null,
@@ -89,9 +89,9 @@
         "minHeight": 600,
         "minWidth": 1000,
         "resizable": true,
-        "title": "HiFlac",
+        "title": "Interlude",
         "width": 1400,
-        "decorations": true,
+        "decorations": false,
         "transparent": false,
         "center": true
       }

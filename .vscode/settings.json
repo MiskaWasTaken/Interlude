@@ -14,5 +14,11 @@
   "rust-analyzer.linkedProjects": ["./src-tauri/Cargo.toml"],
   "files.associations": {
     "*.css": "tailwindcss"
+  },
+  "chat.tools.terminal.autoApprove": {
+    "/^cd \"c:\\\\Users\\\\Aarya Mungli\\\\HiFlac\\\\src-tauri\"; cargo check 2>&1$/": {
+      "approve": true,
+      "matchCommandLine": true
+    }
   }
 }

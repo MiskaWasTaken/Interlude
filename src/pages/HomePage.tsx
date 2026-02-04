@@ -4,8 +4,10 @@ import { invoke } from "@tauri-apps/api/tauri";
 import { clsx } from "clsx";
 import { useLibraryStore } from "../stores/libraryStore";
 import { usePlayerStore } from "../stores/playerStore";
+import { useStreamingStore } from "../stores/streamingStore";
 import { useGradient } from "../contexts/GradientContext";
 import AlbumArt from "../components/common/AlbumArt";
+import SpotifyCredentialsBanner from "../components/common/SpotifyCredentialsBanner";
 import { PlayIcon, PauseIcon } from "../components/icons";
 import type { Track } from "../types";
 
@@ -16,12 +18,18 @@ export default function HomePage() {
   const { statistics, recentlyPlayed, tracks, albums, artists } =
     useLibraryStore();
   const { playbackState, playTrack, togglePlayPause } = usePlayerStore();
+  const { hasCredentials, checkCredentials } = useStreamingStore();
   const { setColorsFromImage } = useGradient();
   const [activeFilter, setActiveFilter] = useState<ContentFilter>("all");
   const [albumArtworks, setAlbumArtworks] = useState<Record<string, string>>(
     {},
   );
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
+
+  // Check for Spotify credentials on mount
+  useEffect(() => {
+    checkCredentials();
+  }, [checkCredentials]);
 
   // Load artworks for albums
   useEffect(() => {
@@ -121,6 +129,13 @@ export default function HomePage() {
       </div>
 
       <div className="px-6 pb-32">
+        {/* Spotify Credentials Banner */}
+        {hasCredentials === false && (
+          <div className="mb-6">
+            <SpotifyCredentialsBanner variant="card" />
+          </div>
+        )}
+
         {/* Quick Access Grid - Like Spotify's top section */}
         {recentAlbums.length > 0 && (
           <section className="mb-8">

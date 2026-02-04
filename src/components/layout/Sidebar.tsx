@@ -4,6 +4,7 @@ import { clsx } from "clsx";
 import { invoke } from "@tauri-apps/api/tauri";
 import { useLibraryStore } from "../../stores/libraryStore";
 import { usePlayerStore } from "../../stores/playerStore";
+import { useAuthStore } from "../../stores/authStore";
 import AlbumArt from "../common/AlbumArt";
 import {
   HomeIcon,
@@ -22,6 +23,7 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const { albums, artists, recentlyPlayed, smartPlaylists } = useLibraryStore();
   const { playTrack } = usePlayerStore();
+  const { user } = useAuthStore();
   const [activeFilter, setActiveFilter] = useState<FilterTab | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
@@ -397,6 +399,53 @@ export default function Sidebar() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Profile Card */}
+      <div className="bg-amoled-elevated rounded-lg p-3">
+        <NavLink
+          to="/profile"
+          className={({ isActive }) =>
+            clsx(
+              "flex items-center gap-3 p-2 rounded-md transition-colors",
+              isActive ? "bg-amoled-hover" : "hover:bg-amoled-hover/50",
+            )
+          }
+        >
+          <div className="w-10 h-10 rounded-full bg-amoled-card overflow-hidden flex-shrink-0">
+            {user?.user_metadata?.avatar_url ? (
+              <img
+                src={user.user_metadata.avatar_url}
+                alt="Profile"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-text-muted">
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                  />
+                </svg>
+              </div>
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-text-primary truncate">
+              {user?.user_metadata?.full_name ||
+                user?.email?.split("@")[0] ||
+                "Profile"}
+            </p>
+            <p className="text-xs text-text-secondary truncate">View profile</p>
+          </div>
+        </NavLink>
       </div>
 
       {/* Bottom padding for player bar */}

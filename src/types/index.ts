@@ -62,7 +62,8 @@ export interface PlaybackState {
   bit_depth: number;
   channels: number;
   shuffle: boolean;
-  repeat_mode: 'off' | 'one' | 'all';
+  repeat_mode: "off" | "one" | "all";
+  track_finished?: boolean; // True when current track has finished playing
 }
 
 // Statistics

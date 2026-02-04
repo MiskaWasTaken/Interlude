@@ -4,14 +4,16 @@
 )]
 
 mod audio;
-mod database;
-mod library;
 mod commands;
+mod database;
+mod ffmpeg;
+mod library;
+mod stream_cache;
 mod streaming;
 
-use tauri::Manager;
-use std::sync::Arc;
 use parking_lot::Mutex;
+use std::sync::Arc;
+use tauri::Manager;
 
 use audio::AudioEngine;
 use database::Database;
@@ -30,12 +32,13 @@ fn main() {
 
     tauri::Builder::default()
         .setup(|app| {
-            let app_dir = app.path_resolver()
+            let app_dir = app
+                .path_resolver()
                 .app_data_dir()
                 .expect("Failed to get app data directory");
-            
+
             std::fs::create_dir_all(&app_dir).ok();
-            
+
             let db_path = app_dir.join("hiflac.db");
             let database = Database::new(&db_path).expect("Failed to initialize database");
             let audio_engine = AudioEngine::new().expect("Failed to initialize audio engine");
@@ -92,6 +95,46 @@ fn main() {
             commands::get_best_stream,
             commands::play_spotify_track,
             commands::set_streaming_preferences,
+            commands::set_spotify_credentials,
+            commands::get_spotify_credentials,
+            commands::clear_spotify_credentials,
+            commands::has_spotify_credentials,
+            // Stream cache commands
+            commands::is_track_cached,
+            commands::get_cache_dir,
+            commands::get_cache_size,
+            commands::clear_stream_cache,
+            commands::clear_music_library,
+            commands::get_cache_info,
+            commands::download_tidal_track,
+            commands::download_qobuz_track,
+            commands::download_amazon_track,
+            commands::play_cached_track,
+            commands::download_and_play_track,
+            commands::get_music_download_dir,
+            // FFmpeg commands
+            commands::get_ffmpeg_status,
+            commands::download_ffmpeg,
+            commands::uninstall_ffmpeg,
+            commands::is_ffmpeg_available,
+            // Progressive streaming commands
+            commands::start_progressive_stream,
+            commands::download_next_chunk,
+            commands::get_current_chunk,
+            commands::advance_to_next_chunk,
+            commands::play_chunk,
+            commands::append_chunk,
+            commands::finalize_stream,
+            commands::get_stream_progress,
+            commands::cleanup_stream,
+            commands::download_all_chunks,
+            commands::get_chunk_by_index,
+            commands::get_chunk_duration,
+            commands::get_total_chunks,
+            commands::is_chunk_ready,
+            commands::get_chunk_for_position,
+            commands::seek_reprioritize,
+            commands::download_all_chunks_mt,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
