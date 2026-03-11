@@ -12,7 +12,7 @@ use crate::AppState;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[derive(Serialize)]
 pub struct SearchResults {
@@ -941,9 +941,38 @@ pub async fn download_and_play_track(
     isrc: Option<String>,
     metadata: Option<TrackMetadata>,
 ) -> Result<DownloadResult, String> {
-    // 1. Check if already cached/downloaded
+    // 1. FIRST: Check if already downloaded in music library with metadata-based filename (Artist/Album/Track.flac)
+    // This takes priority over cache because these are the finalized, properly named files
+    if let Some(meta) = metadata.as_ref() {
+        if let Some(music_path) =
+            STREAM_CACHE.find_in_music_library_full(&meta.name, &meta.artist, &meta.album)
+        {
+            println!("[Download] Track found in music library: {:?}", music_path);
+
+            // Play immediately from music library
+            let path_str = music_path.to_string_lossy().to_string();
+            {
+                let mut audio_engine = state.audio_engine.lock();
+                audio_engine
+                    .play(&path_str)
+                    .map_err(|e| format!("Failed to play from library: {}", e))?;
+            }
+
+            return Ok(DownloadResult {
+                success: true,
+                file_path: Some(path_str),
+                error: None,
+                source: "Library".to_string(),
+                format: "FLAC".to_string(),
+                sample_rate: None,
+                bit_depth: None,
+            });
+        }
+    }
+
+    // 2. SECOND: Check stream cache by track ID (temporary cached files)
     if let Some(cached_path) = STREAM_CACHE.is_cached(&spotify_track_id) {
-        println!("[Download] Track already cached: {:?}", cached_path);
+        println!("[Download] Track found in cache: {:?}", cached_path);
 
         // Play the cached file
         let path_str = cached_path.to_string_lossy().to_string();
@@ -1401,32 +1430,8 @@ pub async fn start_progressive_stream(
     tidal_url: Option<String>,
     metadata: Option<TrackMetadata>,
 ) -> Result<ProgressiveStreamResult, String> {
-    // Check if already fully cached by track ID
-    if let Some(cached_path) = STREAM_CACHE.is_cached(&spotify_track_id) {
-        println!("[Progressive] Track already cached: {:?}", cached_path);
-
-        // Play immediately
-        let path_str = cached_path.to_string_lossy().to_string();
-        {
-            let mut audio_engine = state.audio_engine.lock();
-            audio_engine
-                .play(&path_str)
-                .map_err(|e| format!("Failed to play cached track: {}", e))?;
-        }
-
-        return Ok(ProgressiveStreamResult {
-            success: true,
-            first_chunk_path: Some(path_str),
-            total_chunks: 1,
-            error: None,
-            source: "Cache".to_string(),
-            format: "FLAC".to_string(),
-            sample_rate: None,
-            bit_depth: None,
-        });
-    }
-
-    // Check if already downloaded in music library with metadata-based filename (Artist/Album/Track.flac)
+    // FIRST: Check if already downloaded in music library with metadata-based filename (Artist/Album/Track.flac)
+    // This takes priority over cache because these are the finalized, properly named files
     if let Some(meta) = metadata.as_ref() {
         if let Some(music_path) =
             STREAM_CACHE.find_in_music_library_full(&meta.name, &meta.artist, &meta.album)
@@ -1454,8 +1459,37 @@ pub async fn start_progressive_stream(
                 format: "FLAC".to_string(),
                 sample_rate: None,
                 bit_depth: None,
+                byte_limit: None,
+                is_bts_stream: false,
             });
         }
+    }
+
+    // SECOND: Check if already in stream cache by track ID (temporary cached files)
+    if let Some(cached_path) = STREAM_CACHE.is_cached(&spotify_track_id) {
+        println!("[Progressive] Track found in cache: {:?}", cached_path);
+
+        // Play immediately
+        let path_str = cached_path.to_string_lossy().to_string();
+        {
+            let mut audio_engine = state.audio_engine.lock();
+            audio_engine
+                .play(&path_str)
+                .map_err(|e| format!("Failed to play cached track: {}", e))?;
+        }
+
+        return Ok(ProgressiveStreamResult {
+            success: true,
+            first_chunk_path: Some(path_str),
+            total_chunks: 1,
+            error: None,
+            source: "Cache".to_string(),
+            format: "FLAC".to_string(),
+            sample_rate: None,
+            bit_depth: None,
+            byte_limit: None,
+            is_bts_stream: false,
+        });
     }
 
     // Check FFmpeg
@@ -1539,12 +1573,26 @@ pub async fn start_progressive_stream(
                         .await
                     {
                         Ok(result) => {
-                            // Play first chunk
+                            // Play first chunk - for BTS streams, use play_with_limit
                             if let Some(ref path) = result.first_chunk_path {
                                 let mut audio_engine = state.audio_engine.lock();
-                                audio_engine
-                                    .play(path)
-                                    .map_err(|e| format!("Failed to play first chunk: {}", e))?;
+                                if result.is_bts_stream {
+                                    if let Some(limit) = result.byte_limit {
+                                        println!("[Progressive] Starting BTS playback with byte limit: {}", limit);
+                                        audio_engine.play_with_limit(path, limit).map_err(|e| {
+                                            format!("Failed to play BTS first chunk: {}", e)
+                                        })?;
+                                    } else {
+                                        // Fallback to regular play if no byte limit
+                                        audio_engine.play(path).map_err(|e| {
+                                            format!("Failed to play first chunk: {}", e)
+                                        })?;
+                                    }
+                                } else {
+                                    audio_engine.play(path).map_err(|e| {
+                                        format!("Failed to play first chunk: {}", e)
+                                    })?;
+                                }
                             }
                             return Ok(result);
                         }
@@ -1589,6 +1637,20 @@ pub fn play_chunk(state: State<'_, AppState>, chunk_path: String) -> Result<(), 
         .map_err(|e| format!("Failed to play chunk: {}", e))
 }
 
+/// Play a file with a byte limit (for progressive streaming)
+/// Only decodes audio up to the specified byte limit
+#[tauri::command]
+pub fn play_with_limit(
+    state: State<'_, AppState>,
+    file_path: String,
+    byte_limit: u64,
+) -> Result<(), String> {
+    let mut audio_engine = state.audio_engine.lock();
+    audio_engine
+        .play_with_limit(&file_path, byte_limit)
+        .map_err(|e| format!("Failed to play with limit: {}", e))
+}
+
 /// Append a chunk to the current playback buffer (for gapless transitions)
 #[tauri::command]
 pub fn append_chunk(state: State<'_, AppState>, chunk_path: String) -> Result<(), String> {
@@ -1596,6 +1658,21 @@ pub fn append_chunk(state: State<'_, AppState>, chunk_path: String) -> Result<()
     audio_engine
         .append_samples(&chunk_path)
         .map_err(|e| format!("Failed to append chunk: {}", e))
+}
+
+/// Append samples from a specific byte range of a file (for progressive streaming)
+/// Decodes from the file starting at the previous limit up to the new limit
+#[tauri::command]
+pub fn append_from_offset(
+    state: State<'_, AppState>,
+    file_path: String,
+    offset: u64,
+    limit: u64,
+) -> Result<(), String> {
+    let mut audio_engine = state.audio_engine.lock();
+    audio_engine
+        .append_from_offset(&file_path, offset, limit)
+        .map_err(|e| format!("Failed to append from offset: {}", e))
 }
 
 /// Finalize a progressive stream - join all chunks and save to music library
@@ -1666,6 +1743,13 @@ pub async fn download_all_chunks_mt(track_id: String) -> Result<usize, String> {
     STREAM_CACHE
         .download_all_chunks_multithreaded(&track_id)
         .await
+}
+
+/// Get BTS stream info for progressive playback
+/// Returns (file_path, bytes_downloaded, total_size, is_complete)
+#[tauri::command]
+pub fn get_bts_stream_info(track_id: String) -> Option<(String, u64, u64, bool)> {
+    STREAM_CACHE.get_bts_stream_info(&track_id)
 }
 
 /// Clear entire music library (database + files)

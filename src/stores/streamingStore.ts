@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { supabase } from "../lib/supabase";
 import type {
   SpotifyTrack,
@@ -22,6 +22,11 @@ interface ProgressiveStreamState {
   isComplete: boolean;
   chunkPaths: string[];
   preloadingNext: boolean;
+  // BTS stream specific fields
+  isBtsStream: boolean;
+  bytesDownloaded: number;
+  totalBytes: number;
+  filePath: string | null;
 }
 
 interface StreamingState {
@@ -81,7 +86,12 @@ interface StreamingState {
   clearStreamError: () => void;
 
   // Progressive streaming actions
-  preloadNextChunks: (trackId: string, totalChunks: number) => void;
+  preloadNextChunks: (
+    trackId: string,
+    totalChunks: number,
+    isBtsStream?: boolean,
+    initialByteLimit?: number,
+  ) => void;
   playNextChunk: (trackId: string, chunkIndex: number) => Promise<void>;
   finalizeStream: (trackId: string) => Promise<void>;
   seekToPosition: (
@@ -237,7 +247,7 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
         });
 
         console.log(
-          `[Streaming] Progressive stream started: ${result.total_chunks} chunks`,
+          `[Streaming] Progressive stream started: ${result.total_chunks} chunks, BTS: ${result.is_bts_stream}`,
         );
         if (result.sample_rate && result.bit_depth) {
           console.log(
@@ -246,8 +256,14 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
         }
 
         // Start background download of next chunks
+        // For BTS streams, we use a different approach with append_from_offset
         if (result.total_chunks > 1) {
-          get().preloadNextChunks(track.id, result.total_chunks);
+          get().preloadNextChunks(
+            track.id,
+            result.total_chunks,
+            result.is_bts_stream,
+            result.byte_limit || 0,
+          );
         }
       } else {
         throw new Error(result.error || "Failed to start stream");
@@ -257,10 +273,11 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
         error instanceof Error ? error.message : "Failed to play track";
       console.error("[Streaming] Error:", errorMessage);
 
-      // If progressive streaming fails, fall back to full download
+      // If progressive streaming fails due to preview or range not supported, fall back to full download
       if (
-        errorMessage.includes("BTS format") ||
-        errorMessage.includes("Preview")
+        errorMessage.includes("Preview") ||
+        errorMessage.includes("Range") ||
+        errorMessage.includes("Cannot determine file size")
       ) {
         console.log("[Streaming] Falling back to full download...");
         try {
@@ -506,7 +523,12 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
   },
 
   // Progressive streaming - start downloading ALL chunks in background
-  preloadNextChunks: (trackId, totalChunks) => {
+  preloadNextChunks: (
+    trackId,
+    totalChunks,
+    isBtsStream = false,
+    initialByteLimit = 0,
+  ) => {
     // Initialize progressive stream state
     set({
       progressiveStream: {
@@ -516,6 +538,10 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
         isComplete: totalChunks === 1,
         chunkPaths: [],
         preloadingNext: true, // Start downloading immediately
+        isBtsStream,
+        bytesDownloaded: initialByteLimit,
+        totalBytes: 0,
+        filePath: null,
       },
     });
 
@@ -528,7 +554,7 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
     // Start downloading ALL remaining chunks in background with multithreaded support
     const downloadAllChunksInBackground = async () => {
       console.log(
-        `[Progressive] Starting multithreaded download of all ${totalChunks} chunks (2 threads)`,
+        `[Progressive] Starting multithreaded download of all ${totalChunks} chunks (2 threads), BTS: ${isBtsStream}`,
       );
 
       try {
@@ -639,7 +665,52 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
         );
 
         try {
-          // Append the chunk samples to buffer for gapless playback
+          // For BTS streams, use append_from_offset to decode more audio from the growing file
+          if (state.isBtsStream) {
+            // Get current BTS stream info (file path, bytes downloaded)
+            const btsInfo = await invoke<
+              [string, number, number, boolean] | null
+            >("get_bts_stream_info", { trackId });
+
+            if (btsInfo) {
+              const [filePath, bytesDownloaded, totalBytes, isComplete] =
+                btsInfo;
+              const previousBytes = state.bytesDownloaded;
+
+              if (bytesDownloaded > previousBytes) {
+                console.log(
+                  `[Progressive BTS] Appending from offset ${previousBytes} to ${bytesDownloaded}`,
+                );
+
+                await invoke("append_from_offset", {
+                  filePath,
+                  offset: previousBytes,
+                  limit: bytesDownloaded - previousBytes,
+                });
+
+                // Update state with new bytes downloaded
+                set({
+                  progressiveStream: {
+                    ...state,
+                    currentChunk: nextChunkToAppend,
+                    bytesDownloaded,
+                    totalBytes,
+                    filePath,
+                    isComplete,
+                  },
+                });
+
+                lastAppendedChunk = nextChunkToAppend;
+                console.log(
+                  `[Progressive BTS] Appended ${bytesDownloaded - previousBytes} bytes of audio`,
+                );
+                return true;
+              }
+            }
+            return false;
+          }
+
+          // For non-BTS streams, use the regular append_chunk
           await invoke("append_chunk", { chunkPath });
 
           lastAppendedChunk = nextChunkToAppend;

@@ -58,6 +58,7 @@ impl FFmpegManager {
     }
 
     /// Get path to ffprobe executable
+    #[allow(dead_code)]
     pub fn ffprobe_path(&self) -> PathBuf {
         if cfg!(windows) {
             self.ffmpeg_dir.join("ffprobe.exe")
@@ -201,7 +202,6 @@ impl FFmpegManager {
         }
 
         let total_size = response.content_length().unwrap_or(0);
-        let mut downloaded: u64 = 0;
 
         // Create temp file for download
         let temp_path = self.app_dir.join("ffmpeg_download.zip");
@@ -214,7 +214,7 @@ impl FFmpegManager {
             .await
             .map_err(|e| format!("Failed to read response: {}", e))?;
 
-        downloaded = bytes.len() as u64;
+        let downloaded = bytes.len() as u64;
         file.write_all(&bytes)
             .map_err(|e| format!("Failed to write file: {}", e))?;
 
@@ -336,7 +336,7 @@ impl FFmpegManager {
     }
 }
 
-/// Global FFmpeg manager instance
+// Global FFmpeg manager instance
 lazy_static::lazy_static! {
     pub static ref FFMPEG_MANAGER: FFmpegManager = FFmpegManager::new();
 }

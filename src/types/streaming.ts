@@ -70,6 +70,10 @@ export interface ProgressiveStreamResult {
   format: string;
   sample_rate: number | null;
   bit_depth: number | null;
+  // For BTS streams: the byte limit for initial playback
+  byte_limit: number | null;
+  // Whether this is a BTS stream requiring byte-limited playback
+  is_bts_stream: boolean;
 }
 
 export interface NextChunkResult {

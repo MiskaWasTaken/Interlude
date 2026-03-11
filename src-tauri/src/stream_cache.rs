@@ -26,6 +26,7 @@ pub struct DownloadResult {
 
 /// Represents a single chunk of a progressive stream
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct StreamChunk {
     pub chunk_index: usize,
     pub file_path: PathBuf,
@@ -37,6 +38,7 @@ pub struct StreamChunk {
 
 /// State of a progressive stream download
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ProgressiveStreamState {
     pub track_id: String,
     pub total_segments: usize,
@@ -58,11 +60,31 @@ pub struct ProgressiveStreamState {
     pub download_queue: Vec<usize>,
     /// Flag to signal download threads to reprioritize
     pub needs_reprioritize: bool,
+    /// Whether this is a BTS (direct URL) stream
+    pub is_bts_stream: bool,
+    /// BTS direct URL (for range request downloads)
+    pub bts_url: Option<String>,
+    /// Total file size for BTS streams (bytes)
+    pub bts_total_size: Option<u64>,
+    /// Chunk size in bytes for BTS streams (default 2MB for first, 8MB for rest)
+    pub bts_chunk_size: usize,
+    /// First chunk size in bytes for BTS (smaller for faster start)
+    pub bts_first_chunk_size: usize,
+    /// BTS: Bytes downloaded so far (for progressive playback)
+    pub bts_bytes_downloaded: u64,
+    /// BTS: Final file path (for progressive playback)
+    pub bts_file_path: Option<std::path::PathBuf>,
 }
 
 impl ProgressiveStreamState {
     /// Calculate total number of chunks for this stream
     pub fn total_chunks(&self) -> usize {
+        // For BTS streams, total_segments IS the total chunks count
+        if self.is_bts_stream {
+            return self.total_segments;
+        }
+
+        // For DASH streams, calculate based on segments
         if self.total_segments <= self.first_chunk_segments {
             1
         } else {
@@ -72,6 +94,7 @@ impl ProgressiveStreamState {
     }
 
     /// Get segment range for a specific chunk index
+    #[allow(dead_code)]
     pub fn get_chunk_segment_range(&self, chunk_index: usize) -> (usize, usize) {
         if chunk_index == 0 {
             (
@@ -99,6 +122,10 @@ pub struct ProgressiveStreamResult {
     pub format: String,
     pub sample_rate: Option<u32>,
     pub bit_depth: Option<u32>,
+    /// For BTS streams: the byte limit for initial playback (first chunk size)
+    pub byte_limit: Option<u64>,
+    /// For BTS streams: whether this is a BTS stream requiring byte-limited playback
+    pub is_bts_stream: bool,
 }
 
 /// Result of getting the next chunk
@@ -180,6 +207,7 @@ impl StreamCache {
     }
 
     /// Check if track is in music library with metadata-based filename
+    #[allow(dead_code)]
     pub fn find_in_music_library(&self, track_name: &str, artist_name: &str) -> Option<PathBuf> {
         let sanitized_name = Self::sanitize_filename(&format!("{} - {}", artist_name, track_name));
         let music_path = self.music_dir.join(format!("{}.flac", sanitized_name));
@@ -528,6 +556,7 @@ impl StreamCache {
     }
 
     /// Download DASH segments and combine into a single file
+    #[allow(dead_code)]
     async fn download_dash_segments(
         &self,
         track_id: &str,
@@ -979,11 +1008,21 @@ impl StreamCache {
         let manifest_str = String::from_utf8_lossy(&manifest_bytes);
         let trimmed = manifest_str.trim();
 
-        // Only DASH format supports progressive streaming
+        // Check if it's BTS (JSON) or DASH (XML)
         if trimmed.starts_with('{') {
-            return Err(
-                "BTS format doesn't support progressive streaming, use full download".to_string(),
-            );
+            // BTS format - use range-based progressive streaming
+            println!("[Progressive] Manifest is BTS format (JSON), using range-based streaming");
+            return self
+                .start_progressive_stream_bts(
+                    track_id,
+                    &manifest_bytes,
+                    sample_rate,
+                    bit_depth,
+                    track_name,
+                    artist_name,
+                    album_name,
+                )
+                .await;
         }
 
         // Parse DASH manifest
@@ -1060,6 +1099,13 @@ impl StreamCache {
             priority_chunk: None,
             download_queue,
             needs_reprioritize: false,
+            is_bts_stream: false,
+            bts_url: None,
+            bts_total_size: None,
+            bts_chunk_size: 8 * 1024 * 1024,       // 8MB default
+            bts_first_chunk_size: 2 * 1024 * 1024, // 2MB for first chunk
+            bts_bytes_downloaded: 0,
+            bts_file_path: None,
         };
 
         // Store state
@@ -1080,12 +1126,654 @@ impl StreamCache {
             format: "FLAC".to_string(),
             sample_rate,
             bit_depth,
+            byte_limit: None,
+            is_bts_stream: false,
         })
+    }
+
+    /// Start a progressive stream for BTS format (direct URL with range requests)
+    /// Downloads the file in chunks using HTTP Range headers for low latency playback
+    async fn start_progressive_stream_bts(
+        &self,
+        track_id: &str,
+        manifest_bytes: &[u8],
+        sample_rate: Option<u32>,
+        bit_depth: Option<u32>,
+        track_name: Option<&str>,
+        artist_name: Option<&str>,
+        album_name: Option<&str>,
+    ) -> Result<ProgressiveStreamResult, String> {
+        // Parse BTS JSON manifest to get URL
+        let manifest_json: serde_json::Value = serde_json::from_slice(manifest_bytes)
+            .map_err(|e| format!("Failed to parse BTS manifest: {}", e))?;
+
+        let bts_url = manifest_json
+            .get("urls")
+            .and_then(|u| u.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| "No URLs in BTS manifest".to_string())?
+            .to_string();
+
+        println!("[Progressive BTS] URL: {}", bts_url);
+
+        // Get file size with HEAD request to determine chunking
+        let head_response = self
+            .client
+            .head(&bts_url)
+            .send()
+            .await
+            .map_err(|e| format!("HEAD request failed: {}", e))?;
+
+        // Check if server supports range requests
+        let accepts_ranges = head_response
+            .headers()
+            .get("accept-ranges")
+            .map(|v| v.to_str().unwrap_or("") == "bytes")
+            .unwrap_or(false);
+
+        let content_length = head_response
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok());
+
+        let total_size = content_length.ok_or_else(|| "Cannot determine file size".to_string())?;
+
+        println!(
+            "[Progressive BTS] File size: {} bytes, Range support: {}",
+            total_size, accepts_ranges
+        );
+
+        // If server doesn't support range requests, fall back to full download
+        if !accepts_ranges {
+            println!("[Progressive BTS] Server doesn't support range requests, falling back to full download");
+            return self
+                .download_direct_url_with_metadata(
+                    track_id,
+                    &bts_url,
+                    sample_rate,
+                    bit_depth,
+                    "Tidal",
+                    track_name,
+                    artist_name,
+                    album_name,
+                )
+                .await
+                .map(|result| ProgressiveStreamResult {
+                    success: result.success,
+                    first_chunk_path: result.file_path,
+                    total_chunks: 1,
+                    error: result.error,
+                    source: result.source,
+                    format: result.format,
+                    sample_rate: result.sample_rate,
+                    bit_depth: result.bit_depth,
+                    byte_limit: None,
+                    is_bts_stream: false,
+                });
+        }
+
+        // Calculate chunk sizes for parallel download with early playback
+        // First chunk is smaller (2MB) for fast initial playback (~30s of audio)
+        // Remaining chunks are larger (8MB) for efficiency
+        // Handle edge case: if file is smaller than 2MB, use file size as first chunk
+        let first_chunk_size: u64 = std::cmp::min(2 * 1024 * 1024, total_size);
+        let regular_chunk_size: u64 = 8 * 1024 * 1024;
+
+        // Calculate total chunks
+        let remaining_after_first = total_size.saturating_sub(first_chunk_size);
+        let remaining_chunks = if remaining_after_first > 0 {
+            (remaining_after_first + regular_chunk_size - 1) / regular_chunk_size
+        } else {
+            0
+        };
+        let total_chunks = 1 + remaining_chunks as usize;
+
+        println!(
+            "[Progressive BTS] File: {:.1}MB, {} chunks ({:.1}MB first, then {:.1}MB each)",
+            total_size as f64 / 1024.0 / 1024.0,
+            total_chunks,
+            first_chunk_size as f64 / 1024.0 / 1024.0,
+            regular_chunk_size as f64 / 1024.0 / 1024.0
+        );
+
+        // Create download queue
+        let download_queue: Vec<usize> = (0..total_chunks).collect();
+
+        // Determine file extension from URL
+        let file_ext = if bts_url.contains(".flac") {
+            "flac"
+        } else if bts_url.contains(".m4a") || bts_url.contains(".mp4") {
+            "m4a"
+        } else {
+            "flac"
+        };
+
+        // Create initial state for BTS stream
+        let state = ProgressiveStreamState {
+            track_id: track_id.to_string(),
+            total_segments: total_chunks,
+            segments_per_chunk: 1,
+            first_chunk_segments: 1,
+            chunks: Vec::with_capacity(total_chunks),
+            init_segment: None,
+            media_urls: vec![file_ext.to_string()],
+            current_chunk: 0,
+            is_complete: false,
+            sample_rate,
+            bit_depth,
+            track_name: track_name.map(|s| s.to_string()),
+            artist_name: artist_name.map(|s| s.to_string()),
+            album_name: album_name.map(|s| s.to_string()),
+            priority_chunk: None,
+            download_queue,
+            needs_reprioritize: false,
+            is_bts_stream: true,
+            bts_url: Some(bts_url.clone()),
+            bts_total_size: Some(total_size),
+            bts_chunk_size: regular_chunk_size as usize,
+            bts_first_chunk_size: first_chunk_size as usize,
+            bts_bytes_downloaded: 0,
+            bts_file_path: None, // Will be set after creating the file
+        };
+
+        // Store state
+        {
+            let mut streams = self.progressive_streams.lock().unwrap();
+            streams.insert(track_id.to_string(), state);
+        }
+
+        // Determine the final file path
+        let final_path = if let (Some(track), Some(artist), Some(album)) =
+            (track_name, artist_name, album_name)
+        {
+            let sanitize = |s: &str| -> String {
+                s.chars()
+                    .map(|c| match c {
+                        '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+                        _ => c,
+                    })
+                    .collect()
+            };
+            let artist_dir = self.music_dir.join(sanitize(artist));
+            let album_dir = artist_dir.join(sanitize(album));
+            fs::create_dir_all(&album_dir)
+                .map_err(|e| format!("Failed to create album dir: {}", e))?;
+            album_dir.join(format!("{}.flac", sanitize(track)))
+        } else {
+            self.cache_dir.join(format!("{}.flac", track_id))
+        };
+
+        // Pre-allocate file with total size (allows parallel writes at different offsets)
+        {
+            let file = File::create(&final_path)
+                .map_err(|e| format!("Failed to create output file: {}", e))?;
+            file.set_len(total_size)
+                .map_err(|e| format!("Failed to pre-allocate file: {}", e))?;
+        }
+
+        // Download first chunk synchronously (needed for FLAC header)
+        println!(
+            "[Progressive BTS] Downloading first chunk (0-{})...",
+            first_chunk_size - 1
+        );
+
+        let first_chunk_data = self
+            .client
+            .get(&bts_url)
+            .header("Range", format!("bytes=0-{}", first_chunk_size - 1))
+            .send()
+            .await
+            .map_err(|e| format!("First chunk request failed: {}", e))?
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read first chunk: {}", e))?;
+
+        // Write first chunk at offset 0
+        {
+            use std::io::{Seek, SeekFrom};
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&final_path)
+                .map_err(|e| format!("Failed to open file: {}", e))?;
+            file.seek(SeekFrom::Start(0))
+                .map_err(|e| format!("Seek failed: {}", e))?;
+            file.write_all(&first_chunk_data)
+                .map_err(|e| format!("Write failed: {}", e))?;
+            file.flush().map_err(|e| format!("Flush failed: {}", e))?;
+        }
+
+        // Update state with bytes downloaded, file path, and mark first chunk as ready
+        {
+            let mut streams = self.progressive_streams.lock().unwrap();
+            if let Some(state) = streams.get_mut(track_id) {
+                state.bts_bytes_downloaded = first_chunk_size;
+                state.bts_file_path = Some(final_path.clone());
+
+                // Mark first chunk (index 0) as ready
+                state.chunks.push(StreamChunk {
+                    chunk_index: 0,
+                    file_path: final_path.clone(),
+                    segment_start: 0,
+                    segment_end: first_chunk_size as usize - 1,
+                    duration_seconds: 0.0,
+                    is_ready: true,
+                });
+
+                // If only one chunk, mark as complete
+                if total_chunks == 1 {
+                    state.is_complete = true;
+                }
+            }
+        }
+
+        println!(
+            "[Progressive BTS] First chunk ready ({:.1}MB), starting playback + parallel download",
+            first_chunk_data.len() as f64 / 1024.0 / 1024.0
+        );
+
+        // Spawn background task to download remaining chunks in parallel
+        if total_chunks > 1 {
+            let final_path_clone = final_path.clone();
+            let bts_url_clone = bts_url.clone();
+            let client = self.client.clone();
+            let cache_dir = self.cache_dir.clone();
+            let track_id_owned = track_id.to_string();
+            let progressive_streams = Arc::clone(&self.progressive_streams);
+
+            tokio::spawn(async move {
+                use std::io::{Seek, SeekFrom};
+                use std::sync::atomic::Ordering;
+
+                // Download remaining chunks with 3 parallel workers
+                let chunks_to_download: Vec<usize> = (1..total_chunks).collect();
+                let chunk_queue = std::sync::Arc::new(tokio::sync::Mutex::new(chunks_to_download));
+                let completed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(1));
+
+                let mut handles = Vec::new();
+
+                for worker_id in 0..3.min(total_chunks - 1) {
+                    let queue = chunk_queue.clone();
+                    let url = bts_url_clone.clone();
+                    let client = client.clone();
+                    let path = final_path_clone.clone();
+                    let completed = completed.clone();
+                    let streams = Arc::clone(&progressive_streams);
+                    let track_id = track_id_owned.clone();
+
+                    let handle = tokio::spawn(async move {
+                        loop {
+                            let chunk_idx = {
+                                let mut q = queue.lock().await;
+                                if q.is_empty() {
+                                    break;
+                                }
+                                q.remove(0)
+                            };
+
+                            // Calculate byte range
+                            let start =
+                                first_chunk_size + (chunk_idx - 1) as u64 * regular_chunk_size;
+                            let end = std::cmp::min(start + regular_chunk_size, total_size) - 1;
+                            let chunk_size = end - start + 1;
+
+                            match client
+                                .get(&url)
+                                .header("Range", format!("bytes={}-{}", start, end))
+                                .send()
+                                .await
+                            {
+                                Ok(response)
+                                    if response.status().is_success()
+                                        || response.status().as_u16() == 206 =>
+                                {
+                                    match response.bytes().await {
+                                        Ok(data) => {
+                                            if let Ok(mut file) =
+                                                std::fs::OpenOptions::new().write(true).open(&path)
+                                            {
+                                                if file.seek(SeekFrom::Start(start)).is_ok() {
+                                                    if file.write_all(&data).is_ok() {
+                                                        let _ = file.flush();
+                                                        let done = completed
+                                                            .fetch_add(1, Ordering::SeqCst)
+                                                            + 1;
+
+                                                        // Update state with bytes downloaded and mark chunk as ready
+                                                        {
+                                                            let mut state_guard =
+                                                                streams.lock().unwrap();
+                                                            if let Some(state) =
+                                                                state_guard.get_mut(&track_id)
+                                                            {
+                                                                // Update bytes downloaded
+                                                                state.bts_bytes_downloaded +=
+                                                                    chunk_size;
+
+                                                                // Ensure chunks array is big enough
+                                                                while state.chunks.len()
+                                                                    <= chunk_idx
+                                                                {
+                                                                    state
+                                                                        .chunks
+                                                                        .push(StreamChunk {
+                                                                        chunk_index: state
+                                                                            .chunks
+                                                                            .len(),
+                                                                        file_path:
+                                                                            std::path::PathBuf::new(
+                                                                            ),
+                                                                        segment_start: 0,
+                                                                        segment_end: 0,
+                                                                        duration_seconds: 0.0,
+                                                                        is_ready: false,
+                                                                    });
+                                                                }
+
+                                                                // Mark this chunk as ready
+                                                                state.chunks[chunk_idx] =
+                                                                    StreamChunk {
+                                                                        chunk_index: chunk_idx,
+                                                                        file_path: path.clone(),
+                                                                        segment_start: start
+                                                                            as usize,
+                                                                        segment_end: end as usize,
+                                                                        duration_seconds: 0.0,
+                                                                        is_ready: true,
+                                                                    };
+
+                                                                // Check if all chunks are now complete
+                                                                if done >= total_chunks {
+                                                                    state.is_complete = true;
+                                                                    if let Some(total) =
+                                                                        state.bts_total_size
+                                                                    {
+                                                                        state
+                                                                            .bts_bytes_downloaded =
+                                                                            total;
+                                                                    }
+                                                                }
+
+                                                                println!(
+                                                                    "[Progressive BTS] Worker {} chunk {} done ({}/{}) - bytes_downloaded: {}",
+                                                                    worker_id, chunk_idx, done, total_chunks, state.bts_bytes_downloaded
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Err(e) => eprintln!(
+                                            "[Progressive BTS] Worker {} chunk {} error: {}",
+                                            worker_id, chunk_idx, e
+                                        ),
+                                    }
+                                }
+                                Ok(r) => eprintln!(
+                                    "[Progressive BTS] Worker {} chunk {} status: {}",
+                                    worker_id,
+                                    chunk_idx,
+                                    r.status()
+                                ),
+                                Err(e) => eprintln!(
+                                    "[Progressive BTS] Worker {} chunk {} failed: {}",
+                                    worker_id, chunk_idx, e
+                                ),
+                            }
+                        }
+                    });
+                    handles.push(handle);
+                }
+
+                for handle in handles {
+                    let _ = handle.await;
+                }
+
+                // Mark stream as complete
+                {
+                    let mut state_guard = progressive_streams.lock().unwrap();
+                    if let Some(state) = state_guard.get_mut(&track_id_owned) {
+                        state.is_complete = true;
+                        if let Some(total) = state.bts_total_size {
+                            state.bts_bytes_downloaded = total;
+                        }
+                    }
+                }
+
+                println!("[Progressive BTS] All {} chunks downloaded!", total_chunks);
+
+                // Create cache copy for quick ID lookup
+                let cache_path = cache_dir.join(format!("{}.flac", track_id_owned));
+                if final_path_clone != cache_path {
+                    let _ = fs::copy(&final_path_clone, &cache_path);
+                }
+            });
+        }
+
+        // Return immediately with file path - playback starts while download continues
+        // For BTS streams, include byte_limit so frontend knows to use play_with_limit
+        Ok(ProgressiveStreamResult {
+            success: true,
+            first_chunk_path: Some(final_path.to_string_lossy().to_string()),
+            total_chunks,
+            error: None,
+            source: "Tidal".to_string(),
+            format: file_ext.to_uppercase(),
+            sample_rate,
+            bit_depth,
+            byte_limit: Some(first_chunk_size),
+            is_bts_stream: true,
+        })
+    }
+
+    /// Download BTS chunk data (returns bytes instead of writing to file)
+    async fn download_bts_chunk_data(
+        &self,
+        track_id: &str,
+        chunk_index: usize,
+    ) -> Result<Vec<u8>, String> {
+        let (bts_url, total_size, first_chunk_size, regular_chunk_size) = {
+            let streams = self.progressive_streams.lock().unwrap();
+            let state = streams
+                .get(track_id)
+                .ok_or_else(|| "No active stream for track".to_string())?;
+
+            if !state.is_bts_stream {
+                return Err("Not a BTS stream".to_string());
+            }
+
+            let url = state
+                .bts_url
+                .clone()
+                .ok_or_else(|| "BTS URL not available".to_string())?;
+            let size = state
+                .bts_total_size
+                .ok_or_else(|| "BTS total size not available".to_string())?;
+
+            (url, size, state.bts_first_chunk_size, state.bts_chunk_size)
+        };
+
+        // Calculate byte range
+        let (start_byte, end_byte) = if chunk_index == 0 {
+            (0u64, std::cmp::min(first_chunk_size as u64, total_size) - 1)
+        } else {
+            let offset = first_chunk_size as u64;
+            let chunk_offset = (chunk_index - 1) as u64 * regular_chunk_size as u64;
+            let start = offset + chunk_offset;
+            let end = std::cmp::min(start + regular_chunk_size as u64, total_size) - 1;
+            (start, end)
+        };
+
+        let range_header = format!("bytes={}-{}", start_byte, end_byte);
+
+        let response = self
+            .client
+            .get(&bts_url)
+            .header("Range", range_header)
+            .send()
+            .await
+            .map_err(|e| format!("BTS chunk request failed: {}", e))?;
+
+        if !response.status().is_success() && response.status().as_u16() != 206 {
+            return Err(format!("BTS chunk download failed: {}", response.status()));
+        }
+
+        let chunk_data = response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read BTS chunk: {}", e))?;
+
+        Ok(chunk_data.to_vec())
+    }
+
+    /// Download a specific chunk of a BTS stream using HTTP Range requests
+    async fn download_bts_chunk(
+        &self,
+        track_id: &str,
+        chunk_index: usize,
+    ) -> Result<String, String> {
+        let (bts_url, total_size, first_chunk_size, regular_chunk_size, file_ext) = {
+            let streams = self.progressive_streams.lock().unwrap();
+            let state = streams
+                .get(track_id)
+                .ok_or_else(|| "No active stream for track".to_string())?;
+
+            if !state.is_bts_stream {
+                return Err("Not a BTS stream".to_string());
+            }
+
+            let url = state
+                .bts_url
+                .clone()
+                .ok_or_else(|| "BTS URL not available".to_string())?;
+            let size = state
+                .bts_total_size
+                .ok_or_else(|| "BTS total size not available".to_string())?;
+            let ext = state
+                .media_urls
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "flac".to_string());
+
+            (
+                url,
+                size,
+                state.bts_first_chunk_size,
+                state.bts_chunk_size,
+                ext,
+            )
+        };
+
+        // Calculate byte range for this chunk
+        let (start_byte, end_byte) = if chunk_index == 0 {
+            (0u64, std::cmp::min(first_chunk_size as u64, total_size) - 1)
+        } else {
+            let offset = first_chunk_size as u64;
+            let chunk_offset = (chunk_index - 1) as u64 * regular_chunk_size as u64;
+            let start = offset + chunk_offset;
+            let end = std::cmp::min(start + regular_chunk_size as u64, total_size) - 1;
+            (start, end)
+        };
+
+        let range_header = format!("bytes={}-{}", start_byte, end_byte);
+        println!(
+            "[Progressive BTS] Downloading chunk {} (bytes {}-{}, {:.1}MB)",
+            chunk_index,
+            start_byte,
+            end_byte,
+            (end_byte - start_byte + 1) as f64 / 1024.0 / 1024.0
+        );
+
+        // Download chunk with range request
+        let response = self
+            .client
+            .get(&bts_url)
+            .header("Range", &range_header)
+            .send()
+            .await
+            .map_err(|e| format!("Range request failed: {}", e))?;
+
+        if !response.status().is_success() && response.status().as_u16() != 206 {
+            return Err(format!(
+                "Range request failed with status: {}",
+                response.status()
+            ));
+        }
+
+        let chunk_bytes = response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read chunk: {}", e))?;
+
+        // Save chunk to file
+        let chunk_path = self
+            .cache_dir
+            .join(format!("{}_{}.{}", track_id, chunk_index, file_ext));
+
+        let mut file =
+            File::create(&chunk_path).map_err(|e| format!("Failed to create chunk file: {}", e))?;
+        file.write_all(&chunk_bytes)
+            .map_err(|e| format!("Failed to write chunk: {}", e))?;
+
+        // Update state
+        {
+            let mut streams = self.progressive_streams.lock().unwrap();
+            if let Some(state) = streams.get_mut(track_id) {
+                let chunk = StreamChunk {
+                    chunk_index,
+                    file_path: chunk_path.clone(),
+                    segment_start: start_byte as usize,
+                    segment_end: end_byte as usize,
+                    duration_seconds: 0.0, // Unknown for BTS
+                    is_ready: true,
+                };
+
+                // Ensure chunks vec is large enough
+                let total_chunks = state.total_segments; // total_segments = total_chunks for BTS
+                while state.chunks.len() <= chunk_index {
+                    state.chunks.push(StreamChunk {
+                        chunk_index: state.chunks.len(),
+                        file_path: PathBuf::new(),
+                        segment_start: 0,
+                        segment_end: 0,
+                        duration_seconds: 0.0,
+                        is_ready: false,
+                    });
+                }
+                state.chunks[chunk_index] = chunk;
+
+                // Check if all chunks downloaded
+                if chunk_index == total_chunks - 1 {
+                    state.is_complete = true;
+                }
+            }
+        }
+
+        println!(
+            "[Progressive BTS] Chunk {} ready: {:?}",
+            chunk_index, chunk_path
+        );
+        Ok(chunk_path.to_string_lossy().to_string())
     }
 
     /// Download a specific chunk of segments
     async fn download_chunk(&self, track_id: &str, chunk_index: usize) -> Result<String, String> {
-        let (init_segment, segment_urls, start_segment, end_segment, total_segments) = {
+        // Check if this is a BTS stream (in separate scope to drop the lock before await)
+        let is_bts = {
+            let streams = self.progressive_streams.lock().unwrap();
+            streams
+                .get(track_id)
+                .map(|s| s.is_bts_stream)
+                .unwrap_or(false)
+        };
+
+        if is_bts {
+            return self.download_bts_chunk(track_id, chunk_index).await;
+        }
+
+        let (init_segment, segment_urls, start_segment, end_segment, _total_segments) = {
             let streams = self.progressive_streams.lock().unwrap();
             let state = streams
                 .get(track_id)
@@ -1308,7 +1996,7 @@ impl StreamCache {
 
     /// Finalize stream - join all chunks and save to music library
     pub async fn finalize_stream(&self, track_id: &str) -> Result<String, String> {
-        let (chunks, metadata) = {
+        let (chunks, metadata, is_bts) = {
             let streams = self.progressive_streams.lock().unwrap();
             let state = streams
                 .get(track_id)
@@ -1334,11 +2022,17 @@ impl StreamCache {
                     state.sample_rate,
                     state.bit_depth,
                 ),
+                state.is_bts_stream,
             )
         };
 
         if chunks.is_empty() {
             return Err("No chunks to join".to_string());
+        }
+
+        // Handle BTS streams: direct binary concatenation
+        if is_bts {
+            return self.finalize_bts_stream(track_id, &chunks, &metadata).await;
         }
 
         // If only one chunk, convert M4A to FLAC
@@ -1444,6 +2138,87 @@ impl StreamCache {
         Ok(final_path)
     }
 
+    /// Finalize BTS stream - concatenate binary chunks directly
+    async fn finalize_bts_stream(
+        &self,
+        track_id: &str,
+        chunks: &[PathBuf],
+        metadata: &(
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<u32>,
+            Option<u32>,
+        ),
+    ) -> Result<String, String> {
+        println!("[Progressive BTS] Joining {} chunks...", chunks.len());
+
+        // Determine output format from first chunk extension
+        let is_flac = chunks
+            .first()
+            .and_then(|p| p.extension())
+            .map(|e| e == "flac")
+            .unwrap_or(true);
+
+        // Create combined file by concatenating all chunks
+        let temp_combined = self.cache_dir.join(format!("{}_combined.tmp", track_id));
+        let mut output_file = File::create(&temp_combined)
+            .map_err(|e| format!("Failed to create combined file: {}", e))?;
+
+        for (i, chunk_path) in chunks.iter().enumerate() {
+            let chunk_data =
+                fs::read(chunk_path).map_err(|e| format!("Failed to read chunk {}: {}", i, e))?;
+            output_file
+                .write_all(&chunk_data)
+                .map_err(|e| format!("Failed to write chunk {}: {}", i, e))?;
+        }
+        drop(output_file);
+
+        let final_path = self.get_final_path(track_id, metadata)?;
+
+        if is_flac {
+            // Already FLAC, just rename/move
+            fs::rename(&temp_combined, &final_path)
+                .or_else(|_| fs::copy(&temp_combined, &final_path).map(|_| ()))
+                .map_err(|e| format!("Failed to move combined file: {}", e))?;
+            fs::remove_file(&temp_combined).ok();
+        } else {
+            // Need to convert to FLAC
+            let ffmpeg = crate::ffmpeg::get_ffmpeg_path()?;
+            let status = Command::new(&ffmpeg)
+                .args([
+                    "-y",
+                    "-i",
+                    temp_combined.to_str().unwrap(),
+                    "-c:a",
+                    "flac",
+                    "-compression_level",
+                    "5",
+                    final_path.to_str().unwrap(),
+                ])
+                .output()
+                .map_err(|e| format!("Failed to convert to FLAC: {}", e))?;
+
+            if !status.status.success() {
+                let stderr = String::from_utf8_lossy(&status.stderr);
+                return Err(format!("ffmpeg conversion failed: {}", stderr));
+            }
+            fs::remove_file(&temp_combined).ok();
+        }
+
+        // Cleanup stream
+        self.cleanup_stream(track_id)?;
+
+        // Create copy in cache dir for quick ID lookup
+        let cache_path = self.cache_dir.join(format!("{}.flac", track_id));
+        if final_path != cache_path {
+            fs::copy(&final_path, &cache_path).ok();
+        }
+
+        println!("[Progressive BTS] Finalized stream: {:?}", final_path);
+        Ok(final_path.to_string_lossy().to_string())
+    }
+
     /// Get the final path for the joined file
     fn get_final_path(
         &self,
@@ -1498,6 +2273,18 @@ impl StreamCache {
     /// Download ALL remaining chunks in sequence (for background downloading)
     /// This downloads all chunks that haven't been downloaded yet
     pub async fn download_all_remaining_chunks(&self, track_id: &str) -> Result<usize, String> {
+        // For BTS streams, the background task already handles downloading
+        // Return early to avoid duplicate downloads
+        {
+            let streams = self.progressive_streams.lock().unwrap();
+            if let Some(state) = streams.get(track_id) {
+                if state.is_bts_stream {
+                    println!("[Progressive] BTS stream - background download already in progress, skipping");
+                    return Ok(0);
+                }
+            }
+        }
+
         let (total_chunks, already_downloaded) = {
             let streams = self.progressive_streams.lock().unwrap();
             let state = streams
@@ -1607,6 +2394,7 @@ impl StreamCache {
     }
 
     /// Get duration in seconds for a specific chunk
+    #[allow(dead_code)]
     pub fn get_specific_chunk_duration(
         &self,
         track_id: &str,
@@ -1643,9 +2431,66 @@ impl StreamCache {
     }
 
     /// Check if a progressive stream is active for a track
+    #[allow(dead_code)]
     pub fn has_active_stream(&self, track_id: &str) -> bool {
         let streams = self.progressive_streams.lock().unwrap();
         streams.contains_key(track_id)
+    }
+
+    /// Get BTS stream info for progressive playback
+    /// Returns (file_path, bytes_downloaded, total_size, is_complete)
+    pub fn get_bts_stream_info(&self, track_id: &str) -> Option<(String, u64, u64, bool)> {
+        let streams = self.progressive_streams.lock().unwrap();
+        streams.get(track_id).and_then(|s| {
+            if s.is_bts_stream {
+                // Calculate actual bytes downloaded based on completed chunks
+                // For BTS streams, chunks are downloaded to the same file at different offsets
+                // Check how many chunks are marked as complete
+                let completed_chunks = s.chunks.iter().filter(|c| c.is_ready).count();
+                let total_chunks = s.total_chunks();
+
+                // Calculate bytes: first chunk size + (completed-1) * regular chunk size
+                let first_chunk_size = s.bts_first_chunk_size as u64;
+                let regular_chunk_size = s.bts_chunk_size as u64;
+                let total_size = s.bts_total_size.unwrap_or(0);
+
+                // For BTS streams, chunks array may not be populated (they write directly to file)
+                // Instead, check if is_complete flag is set or calculate from progress
+                let bytes_downloaded = if s.is_complete {
+                    total_size
+                } else if s.bts_bytes_downloaded > first_chunk_size {
+                    // If manually updated, use that value
+                    s.bts_bytes_downloaded
+                } else {
+                    // Default to first chunk only
+                    first_chunk_size.min(total_size)
+                };
+
+                Some((
+                    s.bts_file_path.as_ref()?.to_string_lossy().to_string(),
+                    bytes_downloaded,
+                    total_size,
+                    s.is_complete,
+                ))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Update BTS bytes downloaded (called when a chunk finishes downloading)
+    pub fn update_bts_bytes_downloaded(&self, track_id: &str, bytes: u64) {
+        let mut streams = self.progressive_streams.lock().unwrap();
+        if let Some(state) = streams.get_mut(track_id) {
+            if state.is_bts_stream {
+                state.bts_bytes_downloaded = bytes;
+                if let Some(total) = state.bts_total_size {
+                    if bytes >= total {
+                        state.is_complete = true;
+                    }
+                }
+            }
+        }
     }
 
     /// Get stream progress info
@@ -1737,6 +2582,7 @@ impl StreamCache {
     }
 
     /// Get the next chunk to download from the priority queue
+    #[allow(dead_code)]
     pub fn get_next_download_chunk(&self, track_id: &str) -> Option<usize> {
         let streams = self.progressive_streams.lock().unwrap();
         let state = streams.get(track_id)?;
@@ -1755,6 +2601,19 @@ impl StreamCache {
     pub async fn download_all_chunks_multithreaded(&self, track_id: &str) -> Result<usize, String> {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use tokio::sync::Mutex as TokioMutex;
+
+        // Check if this is a BTS stream - use simpler approach for BTS
+        let is_bts = {
+            let streams = self.progressive_streams.lock().unwrap();
+            streams
+                .get(track_id)
+                .map(|s| s.is_bts_stream)
+                .unwrap_or(false)
+        };
+
+        if is_bts {
+            return self.download_all_bts_chunks_multithreaded(track_id).await;
+        }
 
         let (
             total_chunks,
@@ -1996,9 +2855,276 @@ impl StreamCache {
 
         Ok(final_count)
     }
+
+    /// Download all BTS chunks with 2 concurrent worker threads
+    /// Uses HTTP Range requests to download file in chunks
+    async fn download_all_bts_chunks_multithreaded(&self, track_id: &str) -> Result<usize, String> {
+        // For BTS streams, the background task in start_progressive_stream_bts already handles downloading
+        // Return early to avoid duplicate downloads
+        println!("[Progressive BTS] Background download already in progress, skipping multithreaded download");
+        return Ok(0);
+
+        #[allow(unreachable_code)]
+        {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            use tokio::sync::Mutex as TokioMutex;
+
+            let (
+                total_chunks,
+                bts_url,
+                bts_total_size,
+                first_chunk_size,
+                regular_chunk_size,
+                file_ext,
+            ) = {
+                let streams = self.progressive_streams.lock().unwrap();
+                let state = streams
+                    .get(track_id)
+                    .ok_or_else(|| "No active stream for track".to_string())?;
+
+                if !state.is_bts_stream {
+                    return Err("Not a BTS stream".to_string());
+                }
+
+                let url = state
+                    .bts_url
+                    .clone()
+                    .ok_or_else(|| "BTS URL not available".to_string())?;
+                let size = state
+                    .bts_total_size
+                    .ok_or_else(|| "BTS total size not available".to_string())?;
+                let ext = state
+                    .media_urls
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "flac".to_string());
+
+                (
+                    state.total_chunks(),
+                    url,
+                    size,
+                    state.bts_first_chunk_size,
+                    state.bts_chunk_size,
+                    ext,
+                )
+            };
+
+            let downloaded_count = Arc::new(AtomicUsize::new(0));
+            let track_id = track_id.to_string();
+
+            let cache_dir = self.cache_dir.clone();
+            let client = self.client.clone();
+            let progressive_streams = Arc::clone(&self.progressive_streams);
+
+            let downloading_chunks: Arc<TokioMutex<std::collections::HashSet<usize>>> =
+                Arc::new(TokioMutex::new(std::collections::HashSet::new()));
+
+            println!(
+                "[Progressive BTS] Starting 2 concurrent download workers for {} chunks",
+                total_chunks
+            );
+
+            let mut handles = Vec::new();
+
+            for worker_id in 0..2 {
+                let track_id_clone = track_id.clone();
+                let bts_url_clone = bts_url.clone();
+                let cache_dir_clone = cache_dir.clone();
+                let client_clone = client.clone();
+                let streams_clone = Arc::clone(&progressive_streams);
+                let downloaded_count_clone = Arc::clone(&downloaded_count);
+                let downloading_clone = Arc::clone(&downloading_chunks);
+                let file_ext_clone = file_ext.clone();
+
+                let handle = tokio::spawn(async move {
+                    loop {
+                        // Get next chunk to download
+                        let chunk_to_download = {
+                            let mut downloading = downloading_clone.lock().await;
+                            let streams = streams_clone.lock().unwrap();
+
+                            if let Some(state) = streams.get(&track_id_clone) {
+                                if state.is_complete {
+                                    return;
+                                }
+
+                                let mut next_chunk = None;
+                                for &chunk_idx in &state.download_queue {
+                                    let is_downloaded = chunk_idx < state.chunks.len()
+                                        && state.chunks[chunk_idx].is_ready;
+                                    let is_being_downloaded = downloading.contains(&chunk_idx);
+
+                                    if !is_downloaded && !is_being_downloaded {
+                                        next_chunk = Some(chunk_idx);
+                                        downloading.insert(chunk_idx);
+                                        break;
+                                    }
+                                }
+                                next_chunk
+                            } else {
+                                None
+                            }
+                        };
+
+                        let Some(chunk_idx) = chunk_to_download else {
+                            return;
+                        };
+
+                        // Calculate byte range for this chunk
+                        let (start_byte, end_byte) = if chunk_idx == 0 {
+                            (
+                                0u64,
+                                std::cmp::min(first_chunk_size as u64, bts_total_size) - 1,
+                            )
+                        } else {
+                            let offset = first_chunk_size as u64;
+                            let chunk_offset = (chunk_idx - 1) as u64 * regular_chunk_size as u64;
+                            let start = offset + chunk_offset;
+                            let end =
+                                std::cmp::min(start + regular_chunk_size as u64, bts_total_size)
+                                    - 1;
+                            (start, end)
+                        };
+
+                        let range_header = format!("bytes={}-{}", start_byte, end_byte);
+                        println!(
+                        "[Progressive BTS] Worker {} downloading chunk {} (bytes {}-{}, {:.1}MB)",
+                        worker_id,
+                        chunk_idx,
+                        start_byte,
+                        end_byte,
+                        (end_byte - start_byte + 1) as f64 / 1024.0 / 1024.0
+                    );
+
+                        let chunk_path = cache_dir_clone.join(format!(
+                            "{}_{}.{}",
+                            track_id_clone, chunk_idx, file_ext_clone
+                        ));
+
+                        // Download chunk with range request
+                        let result: Result<(), String> = async {
+                            let response = client_clone
+                                .get(&bts_url_clone)
+                                .header("Range", &range_header)
+                                .send()
+                                .await
+                                .map_err(|e| format!("Range request failed: {}", e))?;
+
+                            if !response.status().is_success() && response.status().as_u16() != 206
+                            {
+                                return Err(format!("Range request failed: {}", response.status()));
+                            }
+
+                            let chunk_bytes = response
+                                .bytes()
+                                .await
+                                .map_err(|e| format!("Failed to read chunk: {}", e))?;
+
+                            let mut file = File::create(&chunk_path)
+                                .map_err(|e| format!("Failed to create chunk file: {}", e))?;
+                            file.write_all(&chunk_bytes)
+                                .map_err(|e| format!("Failed to write chunk: {}", e))?;
+
+                            Ok(())
+                        }
+                        .await;
+
+                        // Remove from downloading set
+                        {
+                            let mut downloading = downloading_clone.lock().await;
+                            downloading.remove(&chunk_idx);
+                        }
+
+                        match result {
+                            Ok(()) => {
+                                let mut streams = streams_clone.lock().unwrap();
+                                if let Some(state) = streams.get_mut(&track_id_clone) {
+                                    let chunk = StreamChunk {
+                                        chunk_index: chunk_idx,
+                                        file_path: chunk_path.clone(),
+                                        segment_start: start_byte as usize,
+                                        segment_end: end_byte as usize,
+                                        duration_seconds: 0.0,
+                                        is_ready: true,
+                                    };
+
+                                    while state.chunks.len() <= chunk_idx {
+                                        state.chunks.push(StreamChunk {
+                                            chunk_index: state.chunks.len(),
+                                            file_path: PathBuf::new(),
+                                            segment_start: 0,
+                                            segment_end: 0,
+                                            duration_seconds: 0.0,
+                                            is_ready: false,
+                                        });
+                                    }
+                                    state.chunks[chunk_idx] = chunk;
+
+                                    // Update bts_bytes_downloaded to reflect this chunk
+                                    let chunk_size = (end_byte - start_byte + 1) as u64;
+                                    state.bts_bytes_downloaded += chunk_size;
+                                    println!(
+                                        "[Progressive BTS] Updated bytes_downloaded to {} (added chunk {} with {} bytes)",
+                                        state.bts_bytes_downloaded, chunk_idx, chunk_size
+                                    );
+
+                                    let tc = state.total_chunks();
+                                    let all_downloaded = (0..tc).all(|i| {
+                                        i < state.chunks.len() && state.chunks[i].is_ready
+                                    });
+                                    if all_downloaded {
+                                        state.is_complete = true;
+                                        // Set final bytes downloaded to total size
+                                        if let Some(total) = state.bts_total_size {
+                                            state.bts_bytes_downloaded = total;
+                                        }
+                                    }
+                                }
+
+                                downloaded_count_clone.fetch_add(1, Ordering::SeqCst);
+                                println!(
+                                    "[Progressive BTS] Worker {} completed chunk {}",
+                                    worker_id, chunk_idx
+                                );
+                            }
+                            Err(e) => {
+                                println!(
+                                    "[Progressive BTS] Worker {} failed chunk {}: {}",
+                                    worker_id, chunk_idx, e
+                                );
+                            }
+                        }
+                    }
+                });
+
+                handles.push(handle);
+            }
+
+            for handle in handles {
+                let _ = handle.await;
+            }
+
+            let final_count = downloaded_count.load(Ordering::SeqCst);
+
+            {
+                let mut streams = progressive_streams.lock().unwrap();
+                if let Some(state) = streams.get_mut(&track_id) {
+                    let tc = state.total_chunks();
+                    let all_downloaded =
+                        (0..tc).all(|i| i < state.chunks.len() && state.chunks[i].is_ready);
+                    if all_downloaded {
+                        state.is_complete = true;
+                        println!("[Progressive BTS] All {} chunks downloaded", total_chunks);
+                    }
+                }
+            }
+
+            Ok(final_count)
+        } // end of #[allow(unreachable_code)] block
+    }
 }
 
-/// Global stream cache instance
+// Global stream cache instance
 lazy_static::lazy_static! {
     pub static ref STREAM_CACHE: StreamCache = StreamCache::new();
 }

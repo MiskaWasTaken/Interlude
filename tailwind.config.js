@@ -1,92 +1,84 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
       colors: {
-        // AMOLED Theme - True blacks
+        // AMOLED Pure Blacks
         amoled: {
-          black: '#000000',
-          surface: '#0a0a0a',
-          elevated: '#121212',
-          card: '#181818',
-          hover: '#282828',
-          border: '#282828',
+          black: "#000000",
+          surface: "#0a0a0a",
+          card: "#121212",
+          elevated: "#1a1a1a",
+          border: "#262626",
+          hover: "#2a2a2a",
         },
-        // Text colors
+        // Text Hierarchy
         text: {
-          primary: '#ffffff',
-          secondary: '#b3b3b3',
-          muted: '#6a6a6a',
+          primary: "#ffffff",
+          secondary: "#a1a1a1",
+          muted: "#6b6b6b",
+          disabled: "#404040",
         },
-        // Accent colors (will be dynamic based on album art)
+        // Accent Colors (Spotify-inspired gold)
         accent: {
-          primary: '#d4a853',
-          secondary: '#c9963e',
-          glow: 'rgba(212, 168, 83, 0.3)',
+          primary: "#d4a853",
+          secondary: "#e6c47a",
+          muted: "#9a7b3d",
         },
-        // Format badge colors
-        format: {
-          flac: '#d4a853',
-          hires: '#22c55e',
-          dsd: '#a855f7',
-        },
+        // Status Colors
+        success: "#22c55e",
+        warning: "#f59e0b",
+        error: "#ef4444",
+      },
+      spacing: {
+        // Generous spacing scale
+        18: "4.5rem",
+        22: "5.5rem",
+        26: "6.5rem",
+        30: "7.5rem",
+      },
+      borderRadius: {
+        "2xl": "1rem",
+        "3xl": "1.5rem",
+        "4xl": "2rem",
+      },
+      fontSize: {
+        "2xs": ["0.625rem", { lineHeight: "0.875rem" }],
       },
       fontFamily: {
         sans: [
-          '-apple-system',
-          'BlinkMacSystemFont',
-          'Segoe UI',
-          'Roboto',
-          'Helvetica Neue',
-          'Arial',
-          'sans-serif',
+          "Inter",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "Segoe UI",
+          "Roboto",
+          "sans-serif",
         ],
-      },
-      fontSize: {
-        '2xs': ['0.625rem', { lineHeight: '0.75rem' }],
-      },
-      spacing: {
-        '18': '4.5rem',
-        '88': '22rem',
-        '112': '28rem',
-        '128': '32rem',
-      },
-      borderRadius: {
-        'xl': '0.75rem',
-        '2xl': '1rem',
-        '3xl': '1.5rem',
+        mono: ["JetBrains Mono", "Fira Code", "monospace"],
       },
       boxShadow: {
-        'glow': '0 0 20px rgba(212, 168, 83, 0.3)',
-        'card': '0 8px 24px rgba(0, 0, 0, 0.5)',
-        'player': '0 -8px 32px rgba(0, 0, 0, 0.8)',
+        glow: "0 0 20px rgba(212, 168, 83, 0.15)",
+        "glow-lg": "0 0 40px rgba(212, 168, 83, 0.2)",
+        elevated: "0 8px 32px rgba(0, 0, 0, 0.4)",
       },
       animation: {
-        'gradient': 'gradient 15s ease infinite',
-        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        'fade-in': 'fadeIn 0.3s ease-out',
-        'slide-up': 'slideUp 0.3s ease-out',
+        "fade-in": "fadeIn 0.2s ease-out",
+        "slide-up": "slideUp 0.3s ease-out",
+        "pulse-slow": "pulse 3s infinite",
       },
       keyframes: {
-        gradient: {
-          '0%, 100%': { backgroundPosition: '0% 50%' },
-          '50%': { backgroundPosition: '100% 50%' },
-        },
         fadeIn: {
-          '0%': { opacity: '0' },
-          '100%': { opacity: '1' },
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
         },
         slideUp: {
-          '0%': { opacity: '0', transform: 'translateY(10px)' },
-          '100%': { opacity: '1', transform: 'translateY(0)' },
+          "0%": { opacity: "0", transform: "translateY(10px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
         },
       },
-      backgroundSize: {
-        '200%': '200% 200%',
-      },
-      transitionDuration: {
-        '400': '400ms',
+      backdropBlur: {
+        xs: "2px",
       },
     },
   },

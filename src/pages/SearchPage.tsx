@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { clsx } from "clsx";
 import { usePlayerStore } from "../stores/playerStore";
 import { useLibraryStore } from "../stores/libraryStore";
@@ -416,7 +416,7 @@ function TrackRow({
       )}
       onClick={onPlay}
     >
-      <div className="relative w-10 h-10 flex-shrink-0">
+      <div className="relative w-10 h-10 shrink-0">
         <AlbumArt
           src={artwork}
           alt={track.album}
@@ -559,7 +559,7 @@ function SpotifyTrackRow({
       onClick={onPlay}
     >
       {/* Album Art */}
-      <div className="relative w-12 h-12 flex-shrink-0">
+      <div className="relative w-12 h-12 shrink-0">
         {track.cover_url ? (
           <img
             src={track.cover_url}

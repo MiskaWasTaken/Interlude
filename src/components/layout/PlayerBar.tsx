@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { clsx } from "clsx";
 import { useNavigate } from "react-router-dom";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { usePlayerStore } from "../../stores/playerStore";
 import { useLibraryStore } from "../../stores/libraryStore";
 import { useStreamingStore } from "../../stores/streamingStore";
@@ -194,14 +194,14 @@ export default function PlayerBar() {
     : HeartIcon;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 h-[90px] bg-amoled-black border-t border-amoled-border z-50">
-      <div className="flex items-center h-full px-4">
+    <div className="fixed bottom-0 left-0 right-0 h-[100px] bg-amoled-black border-t border-amoled-border z-50">
+      <div className="flex items-center h-full px-6">
         {/* Left - Track Info */}
-        <div className="flex items-center gap-3 w-[30%] min-w-[180px]">
+        <div className="flex items-center gap-4 w-[30%] min-w-[200px]">
           {(current_track || currentSpotifyTrack) && (
             <>
               <div
-                className="relative w-14 h-14 rounded overflow-hidden flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                className="relative w-16 h-16 rounded-md overflow-hidden shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
                 onClick={() => {
                   if (!isStreaming && current_track) {
                     navigate(
@@ -243,7 +243,7 @@ export default function PlayerBar() {
 
               <div className="min-w-0 flex-1">
                 <p
-                  className="text-sm font-medium text-text-primary truncate hover:underline cursor-pointer"
+                  className="text-base font-medium text-text-primary truncate hover:underline cursor-pointer"
                   onClick={() => {
                     if (!isStreaming && current_track) {
                       navigate(
@@ -255,7 +255,7 @@ export default function PlayerBar() {
                   {activeTrackName}
                 </p>
                 <p
-                  className="text-xs text-text-secondary truncate hover:underline cursor-pointer"
+                  className="text-sm text-text-secondary truncate hover:underline cursor-pointer"
                   onClick={() => {
                     if (!isStreaming && current_track) {
                       navigate(
@@ -272,13 +272,13 @@ export default function PlayerBar() {
                 <button
                   onClick={() => toggleFavorite(current_track.id)}
                   className={clsx(
-                    "p-2 transition-colors",
+                    "p-2.5 transition-colors",
                     current_track.is_favorite
                       ? "text-[#1DB954]"
                       : "text-text-muted hover:text-text-primary",
                   )}
                 >
-                  <FavoriteIconComponent className="w-4 h-4" />
+                  <FavoriteIconComponent className="w-5 h-5" />
                 </button>
               )}
             </>
@@ -286,59 +286,59 @@ export default function PlayerBar() {
         </div>
 
         {/* Center - Player Controls */}
-        <div className="flex-1 flex flex-col items-center gap-1 max-w-[722px] mx-auto">
+        <div className="flex-1 flex flex-col items-center gap-2 max-w-3xl mx-auto">
           {/* Control Buttons */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-5">
             <button
               onClick={toggleShuffle}
               className={clsx(
-                "p-2 transition-colors",
+                "p-2.5 transition-colors",
                 shuffle
                   ? "text-[#1DB954]"
                   : "text-text-secondary hover:text-text-primary",
               )}
             >
-              <ShuffleIcon className="w-4 h-4" />
+              <ShuffleIcon className="w-5 h-5" />
             </button>
 
             <button
               onClick={isStreaming ? previousStreamTrack : previousTrack}
-              className="p-2 text-text-secondary hover:text-text-primary transition-colors"
+              className="p-2.5 text-text-secondary hover:text-text-primary transition-colors"
             >
-              <PreviousIcon className="w-5 h-5" />
+              <PreviousIcon className="w-6 h-6" />
             </button>
 
             <button
               onClick={isStreaming ? toggleStreamPlayPause : togglePlayPause}
               disabled={isLoadingStream}
-              className="p-2 bg-text-primary text-amoled-black rounded-full hover:scale-105 transition-transform disabled:opacity-50"
+              className="p-3 bg-text-primary text-amoled-black rounded-full hover:scale-105 transition-transform disabled:opacity-50"
             >
               {isLoadingStream ? (
-                <div className="w-5 h-5 border-2 border-amoled-black border-t-transparent rounded-full animate-spin" />
+                <div className="w-6 h-6 border-2 border-amoled-black border-t-transparent rounded-full animate-spin" />
               ) : isPlaying ? (
-                <PauseIcon className="w-5 h-5" />
+                <PauseIcon className="w-6 h-6" />
               ) : (
-                <PlayIcon className="w-5 h-5 ml-0.5" />
+                <PlayIcon className="w-6 h-6 ml-0.5" />
               )}
             </button>
 
             <button
               onClick={isStreaming ? nextStreamTrack : nextTrack}
-              className="p-2 text-text-secondary hover:text-text-primary transition-colors"
+              className="p-2.5 text-text-secondary hover:text-text-primary transition-colors"
             >
-              <NextIcon className="w-5 h-5" />
+              <NextIcon className="w-6 h-6" />
             </button>
 
             <button
               onClick={cycleRepeatMode}
               className={clsx(
-                "p-2 transition-colors relative",
+                "p-2.5 transition-colors relative",
                 repeat_mode !== "off"
                   ? "text-[#1DB954]"
                   : "text-text-secondary hover:text-text-primary",
               )}
             >
-              <RepeatIconComponent className="w-4 h-4" />
+              <RepeatIconComponent className="w-5 h-5" />
               {repeat_mode !== "off" && (
                 <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 bg-[#1DB954] rounded-full" />
               )}
@@ -383,7 +383,7 @@ export default function PlayerBar() {
         </div>
 
         {/* Right - Additional Controls */}
-        <div className="flex items-center gap-2 w-[30%] min-w-[180px] justify-end">
+        <div className="flex items-center gap-2 w-[30%] min-w-45 justify-end">
           {/* Audio Quality Badge */}
           {isStreaming && currentStreamInfo && (
             <div className="hidden lg:flex items-center gap-1 px-2 py-0.5 bg-amoled-hover rounded text-xs mr-2">
@@ -420,43 +420,43 @@ export default function PlayerBar() {
             </div>
           )}
 
-          <button className="p-2 text-text-secondary hover:text-text-primary transition-colors">
-            <QueueIcon className="w-4 h-4" />
+          <button className="p-2.5 text-text-secondary hover:text-text-primary transition-colors">
+            <QueueIcon className="w-5 h-5" />
           </button>
 
-          <button className="p-2 text-text-secondary hover:text-text-primary transition-colors">
-            <DevicesIcon className="w-4 h-4" />
+          <button className="p-2.5 text-text-secondary hover:text-text-primary transition-colors">
+            <DevicesIcon className="w-5 h-5" />
           </button>
 
           {/* Volume Control */}
           <div
-            className="flex items-center gap-1"
+            className="flex items-center gap-2"
             onMouseEnter={() => setIsVolumeHovered(true)}
             onMouseLeave={() => setIsVolumeHovered(false)}
           >
             <button
               onClick={() => setVolume(volume === 0 ? 1 : 0)}
-              className="p-2 text-text-secondary hover:text-text-primary transition-colors"
+              className="p-2.5 text-text-secondary hover:text-text-primary transition-colors"
             >
-              <VolumeIconComponent className="w-4 h-4" />
+              <VolumeIconComponent className="w-5 h-5" />
             </button>
 
             <div
               ref={volumeRef}
-              className="w-24 h-1 bg-amoled-hover rounded-full cursor-pointer group relative"
+              className="w-28 h-1.5 bg-amoled-hover rounded-full cursor-pointer group relative"
               onClick={handleVolumeClick}
             >
               <div
                 className="h-full bg-text-primary group-hover:bg-[#1DB954] rounded-full relative transition-colors"
                 style={{ width: `${volume * 100}%` }}
               >
-                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-text-primary rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg" />
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-text-primary rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg" />
               </div>
             </div>
           </div>
 
-          <button className="p-2 text-text-secondary hover:text-text-primary transition-colors">
-            <ExpandIcon className="w-4 h-4" />
+          <button className="p-2.5 text-text-secondary hover:text-text-primary transition-colors">
+            <ExpandIcon className="w-5 h-5" />
           </button>
         </div>
       </div>

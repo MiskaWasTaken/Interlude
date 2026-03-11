@@ -5,6 +5,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::StreamConfig;
 use parking_lot::RwLock;
 use rubato::{FftFixedIn, Resampler};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -12,10 +14,79 @@ use std::thread;
 use symphonia::core::audio::{AudioBufferRef, Signal};
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::formats::FormatOptions;
-use symphonia::core::io::MediaSourceStream;
+use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use thiserror::Error;
+
+/// A wrapper around a File that limits reads to a specified byte limit.
+/// This is used for progressive streaming where only part of the file is downloaded.
+/// Returns EOF when the limit is reached, preventing reads into undownloaded (zero) portions.
+struct LimitedFileReader {
+    file: File,
+    limit: u64,
+    current_pos: u64,
+}
+
+impl LimitedFileReader {
+    fn new(file: File, limit: u64) -> Self {
+        Self {
+            file,
+            limit,
+            current_pos: 0,
+        }
+    }
+}
+
+impl Read for LimitedFileReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.current_pos >= self.limit {
+            return Ok(0); // EOF
+        }
+
+        let remaining = self.limit - self.current_pos;
+        let to_read = std::cmp::min(buf.len() as u64, remaining) as usize;
+
+        let bytes_read = self.file.read(&mut buf[..to_read])?;
+        self.current_pos += bytes_read as u64;
+        Ok(bytes_read)
+    }
+}
+
+impl Seek for LimitedFileReader {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        let new_pos = match pos {
+            SeekFrom::Start(offset) => {
+                self.file.seek(SeekFrom::Start(offset))?;
+                offset
+            }
+            SeekFrom::End(offset) => {
+                // For End, use the limit as the "end" not the actual file size
+                let target = (self.limit as i64 + offset).max(0) as u64;
+                self.file.seek(SeekFrom::Start(target))?;
+                target
+            }
+            SeekFrom::Current(offset) => {
+                let new = (self.current_pos as i64 + offset).max(0) as u64;
+                self.file.seek(SeekFrom::Start(new))?;
+                new
+            }
+        };
+        self.current_pos = new_pos;
+        Ok(new_pos)
+    }
+}
+
+impl MediaSource for LimitedFileReader {
+    fn is_seekable(&self) -> bool {
+        true
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        // Return the limit as the length, not the actual file size
+        Some(self.limit)
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum AudioError {
@@ -66,7 +137,9 @@ impl Default for RepeatMode {
 #[allow(dead_code)]
 pub enum AudioCommand {
     Play(String),
-    AppendSamples(String), // Append audio from file to current buffer (for gapless)
+    PlayWithLimit(String, u64), // Play with byte limit for progressive streaming
+    AppendSamples(String),      // Append audio from file to current buffer (for gapless)
+    AppendFromOffset(String, u64, u64), // Append samples from file starting at byte offset, reading up to limit bytes
     Pause,
     Resume,
     Stop,
@@ -159,10 +232,40 @@ impl AudioEngine {
         Ok(())
     }
 
+    /// Play a file but only decode up to the specified byte limit.
+    /// Used for progressive streaming where only part of the file is downloaded.
+    pub fn play_with_limit(&mut self, file_path: &str, byte_limit: u64) -> Result<(), AudioError> {
+        self.command_tx
+            .send(AudioCommand::PlayWithLimit(
+                file_path.to_string(),
+                byte_limit,
+            ))
+            .map_err(|_| AudioError::HostInit)?;
+        Ok(())
+    }
+
     /// Append audio samples from a file to the current buffer (for gapless playback)
     pub fn append_samples(&mut self, file_path: &str) -> Result<(), AudioError> {
         self.command_tx
             .send(AudioCommand::AppendSamples(file_path.to_string()))
+            .map_err(|_| AudioError::HostInit)?;
+        Ok(())
+    }
+
+    /// Append samples from a specific byte range of a file.
+    /// Used for progressive streaming to append newly downloaded chunks.
+    pub fn append_from_offset(
+        &mut self,
+        file_path: &str,
+        offset: u64,
+        limit: u64,
+    ) -> Result<(), AudioError> {
+        self.command_tx
+            .send(AudioCommand::AppendFromOffset(
+                file_path.to_string(),
+                offset,
+                limit,
+            ))
             .map_err(|_| AudioError::HostInit)?;
         Ok(())
     }
@@ -257,13 +360,23 @@ impl AudioThread {
         loop {
             match self.command_rx.recv() {
                 Ok(AudioCommand::Play(path)) => {
-                    if let Err(e) = self.play_internal(&path) {
+                    if let Err(e) = self.play_internal(&path, None) {
                         log::error!("Playback error: {}", e);
+                    }
+                }
+                Ok(AudioCommand::PlayWithLimit(path, limit)) => {
+                    if let Err(e) = self.play_internal(&path, Some(limit)) {
+                        log::error!("Playback with limit error: {}", e);
                     }
                 }
                 Ok(AudioCommand::AppendSamples(path)) => {
                     if let Err(e) = self.append_samples_internal(&path) {
                         log::error!("Append samples error: {}", e);
+                    }
+                }
+                Ok(AudioCommand::AppendFromOffset(path, offset, limit)) => {
+                    if let Err(e) = self.append_from_offset_internal(&path, offset, limit) {
+                        log::error!("Append from offset error: {}", e);
                     }
                 }
                 Ok(AudioCommand::Pause) => {
@@ -318,7 +431,11 @@ impl AudioThread {
         self.state.write().position = position;
     }
 
-    fn play_internal(&mut self, file_path: &str) -> Result<(), AudioError> {
+    fn play_internal(
+        &mut self,
+        file_path: &str,
+        byte_limit: Option<u64>,
+    ) -> Result<(), AudioError> {
         // Stop any current playback
         self.stop_internal();
 
@@ -327,11 +444,17 @@ impl AudioThread {
             return Err(AudioError::FileNotFound(file_path.to_string()));
         }
 
-        // Open the media source
+        // Open the media source - use LimitedFileReader if byte_limit is specified
         let file =
             std::fs::File::open(path).map_err(|e| AudioError::FileNotFound(e.to_string()))?;
 
-        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        let mss = if let Some(limit) = byte_limit {
+            println!("[Audio] Playing with byte limit: {} bytes", limit);
+            let limited_reader = LimitedFileReader::new(file, limit);
+            MediaSourceStream::new(Box::new(limited_reader), Default::default())
+        } else {
+            MediaSourceStream::new(Box::new(file), Default::default())
+        };
 
         // Create a hint to help the format registry
         let mut hint = Hint::new();
@@ -375,7 +498,7 @@ impl AudioThread {
         );
 
         // Calculate duration
-        let duration = track
+        let _duration = track
             .codec_params
             .n_frames
             .map(|frames| frames as f64 / sample_rate as f64)
@@ -861,6 +984,284 @@ impl AudioThread {
             let mut state = self.state.write();
             state.duration = new_duration;
             // Reset track_finished flag since we have more audio
+            state.track_finished = false;
+            state.is_playing = true;
+        }
+
+        Ok(())
+    }
+
+    /// Append samples from a specific byte range of a file.
+    /// This is used for progressive streaming where we want to decode only newly downloaded data.
+    /// The file is read from `offset` up to `offset + limit` bytes.
+    fn append_from_offset_internal(
+        &mut self,
+        file_path: &str,
+        offset: u64,
+        limit: u64,
+    ) -> Result<(), AudioError> {
+        let path = Path::new(file_path);
+        if !path.exists() {
+            return Err(AudioError::FileNotFound(file_path.to_string()));
+        }
+
+        // Get the output format we need to resample to
+        let output_sample_rate = self.output_sample_rate.ok_or_else(|| {
+            AudioError::Decode(
+                "No output sample rate set - play_internal must be called first".to_string(),
+            )
+        })?;
+        let output_channels = self.output_channels.ok_or_else(|| {
+            AudioError::Decode(
+                "No output channels set - play_internal must be called first".to_string(),
+            )
+        })?;
+
+        log::info!(
+            "Appending samples from offset {} (limit {} bytes): {}",
+            offset,
+            limit,
+            file_path
+        );
+        println!(
+            "[Audio] Appending from offset {} (limit {} bytes): {}",
+            offset, limit, file_path
+        );
+
+        // Open the file and create a limited reader starting from offset
+        let mut file =
+            std::fs::File::open(path).map_err(|e| AudioError::FileNotFound(e.to_string()))?;
+
+        // Seek to the offset
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|e| AudioError::Decode(format!("Seek failed: {}", e)))?;
+
+        // Create a limited reader that reads from current position up to `limit` bytes
+        // But we still need the FLAC header, so we need to create a reader that includes the header
+        // This is tricky - FLAC decoders need the header at the start of the stream
+
+        // For FLAC progressive streaming, we need a different approach:
+        // Re-read the entire file from the start up to (offset + limit) and seek in the decoder
+        let file =
+            std::fs::File::open(path).map_err(|e| AudioError::FileNotFound(e.to_string()))?;
+        let total_limit = offset + limit;
+        let limited_reader = LimitedFileReader::new(file, total_limit);
+
+        let mss = MediaSourceStream::new(Box::new(limited_reader), Default::default());
+
+        let mut hint = Hint::new();
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+
+        let format_opts = FormatOptions::default();
+        let metadata_opts = MetadataOptions::default();
+        let probed = symphonia::default::get_probe()
+            .format(&hint, mss, &format_opts, &metadata_opts)
+            .map_err(|e| AudioError::Decode(e.to_string()))?;
+
+        let mut format = probed.format;
+
+        let track = format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+            .ok_or(AudioError::UnsupportedFormat)?;
+
+        let track_id = track.id;
+
+        // Extract source sample rate and channels from the file
+        let source_sample_rate = track.codec_params.sample_rate.unwrap_or(output_sample_rate);
+        let source_channels = track
+            .codec_params
+            .channels
+            .map(|c| c.count() as u16)
+            .unwrap_or(output_channels);
+
+        // Calculate how many samples we already have (to skip)
+        let existing_samples = self.sample_buffer.read().len();
+
+        // Calculate samples per second for skipping
+        let samples_per_second = output_sample_rate as usize * output_channels as usize;
+        let existing_duration_samples = existing_samples;
+
+        // Convert to source sample count for seeking
+        let source_samples_per_second = source_sample_rate as usize * source_channels as usize;
+        let ratio = source_samples_per_second as f64 / samples_per_second as f64;
+        let source_samples_to_skip = (existing_duration_samples as f64 * ratio) as usize;
+
+        println!(
+            "[Audio] Offset decode: skipping first {} source samples to append new audio",
+            source_samples_to_skip
+        );
+
+        let dec_opts = DecoderOptions::default();
+        let mut decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &dec_opts)
+            .map_err(|e| AudioError::Decode(e.to_string()))?;
+
+        // Decode all samples, but skip the ones we already have
+        let mut new_samples: Vec<f32> = Vec::new();
+        let mut samples_decoded = 0usize;
+
+        loop {
+            let packet = match format.next_packet() {
+                Ok(packet) => packet,
+                Err(symphonia::core::errors::Error::IoError(_)) => break,
+                Err(e) => {
+                    log::warn!("Error reading packet: {}", e);
+                    break;
+                }
+            };
+
+            if packet.track_id() != track_id {
+                continue;
+            }
+
+            match decoder.decode(&packet) {
+                Ok(decoded) => {
+                    let frame_samples = match &decoded {
+                        AudioBufferRef::F32(buf) => buf.frames() * buf.spec().channels.count(),
+                        AudioBufferRef::S16(buf) => buf.frames() * buf.spec().channels.count(),
+                        AudioBufferRef::S24(buf) => buf.frames() * buf.spec().channels.count(),
+                        AudioBufferRef::S32(buf) => buf.frames() * buf.spec().channels.count(),
+                        _ => 0,
+                    };
+
+                    // Skip samples we already have
+                    if samples_decoded + frame_samples <= source_samples_to_skip {
+                        samples_decoded += frame_samples;
+                        continue;
+                    }
+
+                    // Calculate how many samples to skip in this frame
+                    let skip_in_frame = if samples_decoded < source_samples_to_skip {
+                        source_samples_to_skip - samples_decoded
+                    } else {
+                        0
+                    };
+                    samples_decoded += frame_samples;
+
+                    // Extract samples, skipping the first `skip_in_frame` samples
+                    match decoded {
+                        AudioBufferRef::F32(buf) => {
+                            let channels_count = buf.spec().channels.count();
+                            let mut sample_idx = 0;
+                            for frame in 0..buf.frames() {
+                                for ch in 0..channels_count {
+                                    if sample_idx >= skip_in_frame {
+                                        new_samples.push(buf.chan(ch)[frame]);
+                                    }
+                                    sample_idx += 1;
+                                }
+                            }
+                        }
+                        AudioBufferRef::S16(buf) => {
+                            let channels_count = buf.spec().channels.count();
+                            let mut sample_idx = 0;
+                            for frame in 0..buf.frames() {
+                                for ch in 0..channels_count {
+                                    if sample_idx >= skip_in_frame {
+                                        new_samples.push(buf.chan(ch)[frame] as f32 / 32768.0);
+                                    }
+                                    sample_idx += 1;
+                                }
+                            }
+                        }
+                        AudioBufferRef::S24(buf) => {
+                            let channels_count = buf.spec().channels.count();
+                            let mut sample_idx = 0;
+                            for frame in 0..buf.frames() {
+                                for ch in 0..channels_count {
+                                    if sample_idx >= skip_in_frame {
+                                        let sample = buf.chan(ch)[frame].0;
+                                        new_samples.push(sample as f32 / 8388608.0);
+                                    }
+                                    sample_idx += 1;
+                                }
+                            }
+                        }
+                        AudioBufferRef::S32(buf) => {
+                            let channels_count = buf.spec().channels.count();
+                            let mut sample_idx = 0;
+                            for frame in 0..buf.frames() {
+                                for ch in 0..channels_count {
+                                    if sample_idx >= skip_in_frame {
+                                        new_samples.push(buf.chan(ch)[frame] as f32 / 2147483648.0);
+                                    }
+                                    sample_idx += 1;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Decode error: {}", e);
+                }
+            }
+        }
+
+        if new_samples.is_empty() {
+            println!("[Audio] No new samples decoded from offset");
+            return Ok(());
+        }
+
+        println!(
+            "[Audio] Offset decode: {} new samples at {}Hz",
+            new_samples.len(),
+            source_sample_rate
+        );
+
+        // Resample if source sample rate differs from output sample rate
+        let resampled_samples = if source_sample_rate != output_sample_rate {
+            println!(
+                "[Audio] ⚡ RESAMPLING CHUNK: {}Hz -> {}Hz",
+                source_sample_rate, output_sample_rate
+            );
+            resample_audio(
+                &new_samples,
+                source_channels as usize,
+                source_sample_rate,
+                output_sample_rate,
+            )?
+        } else {
+            new_samples
+        };
+
+        // Convert channels if needed
+        let final_samples = if source_channels != output_channels {
+            convert_channels(
+                &resampled_samples,
+                source_channels as usize,
+                output_channels as usize,
+            )
+        } else {
+            resampled_samples
+        };
+
+        // Append to existing buffer
+        {
+            let mut buffer = self.sample_buffer.write();
+            let old_len = buffer.len();
+            buffer.extend(final_samples.iter());
+            println!(
+                "[Audio] Appended {} samples (buffer: {} -> {})",
+                final_samples.len(),
+                old_len,
+                buffer.len()
+            );
+        }
+
+        // Update duration in state
+        {
+            let buffer = self.sample_buffer.read();
+            let new_duration =
+                buffer.len() as f64 / (output_sample_rate as f64 * output_channels as f64);
+            drop(buffer);
+
+            let mut state = self.state.write();
+            state.duration = new_duration;
             state.track_finished = false;
             state.is_playing = true;
         }

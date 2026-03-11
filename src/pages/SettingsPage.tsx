@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { clsx } from "clsx";
 import { useGradient } from "../contexts/GradientContext";
@@ -47,7 +47,7 @@ export default function SettingsPage() {
   // Use streaming store for credentials management
   const { setCredentials, clearCredentials } = useStreamingStore();
 
-  const { gradientEnabled, setGradientEnabled, intensity, setIntensity } =
+  const { gradientMode, setGradientMode, intensity, setIntensity } =
     useGradient();
 
   useEffect(() => {
@@ -225,25 +225,25 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="p-6 pb-28 max-w-3xl">
-      <h1 className="text-2xl font-bold text-text-primary mb-8">Settings</h1>
+    <div className="p-8 pb-32 max-w-3xl">
+      <h1 className="text-3xl font-bold text-text-primary mb-10">Settings</h1>
 
       {/* Audio Settings */}
-      <section className="mb-10">
-        <h2 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
+      <section className="mb-12">
+        <h2 className="text-xl font-semibold text-text-primary mb-6 flex items-center gap-3">
           <span>🎵</span>
           Audio
         </h2>
-        <div className="space-y-6">
+        <div className="space-y-5">
           {/* Output Device */}
-          <div className="bg-amoled-card rounded-xl p-4 border border-amoled-border">
-            <label className="block text-sm font-medium text-text-primary mb-2">
+          <div className="bg-amoled-card rounded-xl p-5 border border-amoled-border">
+            <label className="block text-base font-medium text-text-primary mb-3">
               Output Device
             </label>
             <select
               value={selectedDevice}
               onChange={(e) => handleDeviceChange(e.target.value)}
-              className="w-full px-4 py-2 bg-amoled-elevated text-text-primary rounded-lg border border-amoled-border focus:border-accent-primary focus:outline-none"
+              className="w-full px-4 py-3 bg-amoled-elevated text-text-primary rounded-lg border border-amoled-border focus:border-accent-primary focus:outline-none text-base"
             >
               {audioDevices.map((device) => (
                 <option key={device} value={device}>
@@ -251,19 +251,19 @@ export default function SettingsPage() {
                 </option>
               ))}
             </select>
-            <p className="mt-2 text-xs text-text-muted">
+            <p className="mt-3 text-sm text-text-muted">
               Select the audio output device for playback
             </p>
           </div>
 
           {/* Exclusive Mode */}
-          <div className="bg-amoled-card rounded-xl p-4 border border-amoled-border">
-            <div className="flex items-center justify-between">
+          <div className="bg-amoled-card rounded-xl p-5 border border-amoled-border">
+            <div className="flex items-center justify-between gap-4">
               <div>
-                <label className="block text-sm font-medium text-text-primary">
+                <label className="block text-base font-medium text-text-primary">
                   Exclusive Mode (WASAPI)
                 </label>
-                <p className="text-xs text-text-muted mt-1">
+                <p className="text-sm text-text-muted mt-1.5">
                   Bypass Windows audio mixer for bit-perfect output
                 </p>
               </div>
@@ -272,13 +272,13 @@ export default function SettingsPage() {
           </div>
 
           {/* ReplayGain */}
-          <div className="bg-amoled-card rounded-xl p-4 border border-amoled-border">
-            <div className="flex items-center justify-between">
+          <div className="bg-amoled-card rounded-xl p-5 border border-amoled-border">
+            <div className="flex items-center justify-between gap-4">
               <div>
-                <label className="block text-sm font-medium text-text-primary">
+                <label className="block text-base font-medium text-text-primary">
                   ReplayGain
                 </label>
-                <p className="text-xs text-text-muted mt-1">
+                <p className="text-sm text-text-muted mt-1.5">
                   Normalize volume across tracks
                 </p>
               </div>
@@ -289,19 +289,19 @@ export default function SettingsPage() {
       </section>
 
       {/* Streaming Settings */}
-      <section className="mb-10">
-        <h2 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
+      <section className="mb-12">
+        <h2 className="text-xl font-semibold text-text-primary mb-6 flex items-center gap-3">
           <span>🌐</span>
           Streaming (SpotiFlac)
         </h2>
-        <div className="space-y-6">
+        <div className="space-y-5">
           {/* Spotify API Credentials */}
-          <div className="bg-amoled-card rounded-xl p-4 border border-amoled-border">
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-text-primary mb-1">
+          <div className="bg-amoled-card rounded-xl p-5 border border-amoled-border">
+            <div className="mb-5">
+              <label className="block text-base font-medium text-text-primary mb-2">
                 Spotify Developer Credentials
               </label>
-              <p className="text-xs text-text-muted">
+              <p className="text-sm text-text-muted">
                 Required for online search. Get your free credentials from{" "}
                 <a
                   href="https://developer.spotify.com/dashboard"
@@ -314,9 +314,9 @@ export default function SettingsPage() {
               </p>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div>
-                <label className="block text-xs text-text-secondary mb-1">
+                <label className="block text-sm text-text-secondary mb-2">
                   Client ID
                 </label>
                 <input
@@ -327,11 +327,11 @@ export default function SettingsPage() {
                     setSpotifyCredentialsSaved(false);
                   }}
                   placeholder="Enter your Spotify Client ID"
-                  className="w-full px-4 py-2 bg-amoled-elevated text-text-primary rounded-lg border border-amoled-border focus:border-accent-primary focus:outline-none text-sm"
+                  className="w-full px-4 py-3 bg-amoled-elevated text-text-primary rounded-lg border border-amoled-border focus:border-accent-primary focus:outline-none text-base"
                 />
               </div>
               <div>
-                <label className="block text-xs text-text-secondary mb-1">
+                <label className="block text-sm text-text-secondary mb-2">
                   Client Secret
                 </label>
                 <div className="relative">
@@ -343,18 +343,18 @@ export default function SettingsPage() {
                       setSpotifyCredentialsSaved(false);
                     }}
                     placeholder="Enter your Spotify Client Secret"
-                    className="w-full px-4 py-2 pr-20 bg-amoled-elevated text-text-primary rounded-lg border border-amoled-border focus:border-accent-primary focus:outline-none text-sm"
+                    className="w-full px-4 py-3 pr-20 bg-amoled-elevated text-text-primary rounded-lg border border-amoled-border focus:border-accent-primary focus:outline-none text-base"
                   />
                   <button
                     type="button"
                     onClick={() => setShowSpotifySecret(!showSpotifySecret)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-muted hover:text-text-secondary"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-text-muted hover:text-text-secondary"
                   >
                     {showSpotifySecret ? "Hide" : "Show"}
                   </button>
                 </div>
               </div>
-              <div className="flex gap-2 pt-2">
+              <div className="flex gap-3 pt-3">
                 <button
                   onClick={handleSaveSpotifyCredentials}
                   disabled={
@@ -363,7 +363,7 @@ export default function SettingsPage() {
                     spotifyCredentialsSaved
                   }
                   className={clsx(
-                    "flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                    "flex-1 px-5 py-3 rounded-lg text-base font-medium transition-colors",
                     spotifyCredentialsSaved
                       ? "bg-green-600/20 text-green-400 cursor-default"
                       : !spotifyClientId || !spotifyClientSecret
@@ -376,7 +376,7 @@ export default function SettingsPage() {
                 {spotifyCredentialsSaved && (
                   <button
                     onClick={handleClearSpotifyCredentials}
-                    className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors"
+                    className="px-5 py-3 rounded-lg text-base font-medium bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors"
                   >
                     Clear
                   </button>
@@ -385,11 +385,11 @@ export default function SettingsPage() {
             </div>
 
             {/* How to get credentials */}
-            <details className="mt-4">
-              <summary className="text-xs text-accent-primary cursor-pointer hover:underline">
+            <details className="mt-5">
+              <summary className="text-sm text-accent-primary cursor-pointer hover:underline">
                 How to get Spotify API credentials
               </summary>
-              <ol className="mt-2 text-xs text-text-muted space-y-1 list-decimal list-inside">
+              <ol className="mt-3 text-sm text-text-muted space-y-2 list-decimal list-inside">
                 <li>
                   Go to{" "}
                   <a
@@ -411,11 +411,11 @@ export default function SettingsPage() {
           </div>
 
           {/* Info about streaming */}
-          <div className="bg-amoled-card rounded-xl p-4 border border-amoled-border">
-            <div className="flex items-start gap-3">
-              <span className="text-xl">ℹ️</span>
-              <div className="text-xs text-text-secondary">
-                <p className="mb-2">
+          <div className="bg-amoled-card rounded-xl p-5 border border-amoled-border">
+            <div className="flex items-start gap-4">
+              <span className="text-2xl">ℹ️</span>
+              <div className="text-sm text-text-secondary">
+                <p className="mb-3">
                   <strong className="text-text-primary">How it works:</strong>{" "}
                   Search uses Spotify's API, but actual FLAC audio streams come
                   from Tidal, Qobuz, or Amazon Music via public APIs.
@@ -434,19 +434,19 @@ export default function SettingsPage() {
       </section>
 
       {/* FFmpeg Settings */}
-      <section className="mb-10">
-        <h2 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
+      <section className="mb-12">
+        <h2 className="text-xl font-semibold text-text-primary mb-6 flex items-center gap-3">
           <span>🎬</span>
           FFmpeg
         </h2>
-        <div className="space-y-4">
-          <div className="bg-amoled-card rounded-xl p-4 border border-amoled-border">
-            <div className="flex items-center justify-between mb-4">
+        <div className="space-y-5">
+          <div className="bg-amoled-card rounded-xl p-5 border border-amoled-border">
+            <div className="flex items-center justify-between mb-5">
               <div>
-                <label className="block text-sm font-medium text-text-primary">
+                <label className="block text-base font-medium text-text-primary">
                   FFmpeg Status
                 </label>
-                <p className="text-xs text-text-muted mt-1">
+                <p className="text-sm text-text-muted mt-1.5">
                   Required for hi-res DASH streams from Tidal
                 </p>
               </div>
@@ -506,13 +506,13 @@ export default function SettingsPage() {
               </div>
             )}
 
-            <div className="flex gap-2">
+            <div className="flex gap-3">
               {!ffmpegStatus?.installed ? (
                 <button
                   onClick={handleDownloadFfmpeg}
                   disabled={ffmpegDownloading}
                   className={clsx(
-                    "flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                    "flex-1 px-5 py-3 rounded-lg text-base font-medium transition-colors",
                     ffmpegDownloading
                       ? "bg-amoled-elevated text-text-muted cursor-not-allowed"
                       : "bg-accent-primary text-black hover:bg-accent-secondary",
@@ -525,7 +525,7 @@ export default function SettingsPage() {
               ) : (
                 <button
                   onClick={handleUninstallFfmpeg}
-                  className="flex-1 px-4 py-2 rounded-lg text-sm font-medium bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors"
+                  className="flex-1 px-5 py-3 rounded-lg text-base font-medium bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors"
                 >
                   Uninstall FFmpeg
                 </button>
@@ -534,11 +534,11 @@ export default function SettingsPage() {
           </div>
 
           {/* Info about FFmpeg */}
-          <div className="bg-amoled-card rounded-xl p-4 border border-amoled-border">
-            <div className="flex items-start gap-3">
-              <span className="text-xl">ℹ️</span>
-              <div className="text-xs text-text-secondary">
-                <p className="mb-2">
+          <div className="bg-amoled-card rounded-xl p-5 border border-amoled-border">
+            <div className="flex items-start gap-4">
+              <span className="text-2xl">ℹ️</span>
+              <div className="text-sm text-text-secondary">
+                <p className="mb-3">
                   <strong className="text-text-primary">Why FFmpeg?</strong>{" "}
                   Some Tidal hi-res streams use DASH format which requires
                   FFmpeg to convert to FLAC.
@@ -562,52 +562,54 @@ export default function SettingsPage() {
       </section>
 
       {/* Data Management */}
-      <section className="mb-10">
-        <h2 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
+      <section className="mb-12">
+        <h2 className="text-xl font-semibold text-text-primary mb-6 flex items-center gap-3">
           <span>🗄️</span>
           Data Management
         </h2>
-        <div className="space-y-4">
+        <div className="space-y-5">
           {/* Cache Info */}
-          <div className="bg-amoled-card rounded-xl p-4 border border-amoled-border">
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-text-primary">
+          <div className="bg-amoled-card rounded-xl p-5 border border-amoled-border">
+            <div className="mb-5">
+              <label className="block text-base font-medium text-text-primary">
                 Storage Usage
               </label>
-              <p className="text-xs text-text-muted mt-1">
+              <p className="text-sm text-text-muted mt-1.5">
                 Manage cached streams and downloaded music
               </p>
             </div>
 
-            <div className="space-y-3 mb-4">
-              <div className="flex items-center justify-between p-3 bg-amoled-elevated rounded-lg">
+            <div className="space-y-4 mb-5">
+              <div className="flex items-center justify-between p-4 bg-amoled-elevated rounded-lg">
                 <div>
-                  <p className="text-sm text-text-primary">Stream Cache</p>
-                  <p className="text-xs text-text-muted">
+                  <p className="text-base text-text-primary">Stream Cache</p>
+                  <p className="text-sm text-text-muted">
                     Temporary streaming files
                   </p>
                 </div>
-                <span className="text-sm text-text-secondary font-mono">
+                <span className="text-base text-text-secondary font-mono">
                   {cacheInfo ? formatBytes(cacheInfo.cache_size) : "—"}
                 </span>
               </div>
-              <div className="flex items-center justify-between p-3 bg-amoled-elevated rounded-lg">
+              <div className="flex items-center justify-between p-4 bg-amoled-elevated rounded-lg">
                 <div>
-                  <p className="text-sm text-text-primary">Downloaded Music</p>
-                  <p className="text-xs text-text-muted">Saved FLAC files</p>
+                  <p className="text-base text-text-primary">
+                    Downloaded Music
+                  </p>
+                  <p className="text-sm text-text-muted">Saved FLAC files</p>
                 </div>
-                <span className="text-sm text-text-secondary font-mono">
+                <span className="text-base text-text-secondary font-mono">
                   {cacheInfo ? formatBytes(cacheInfo.music_size) : "—"}
                 </span>
               </div>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-3">
               <button
                 onClick={handleClearCache}
                 disabled={clearing !== null}
                 className={clsx(
-                  "flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                  "flex-1 px-5 py-3 rounded-lg text-base font-medium transition-colors",
                   clearing === "cache"
                     ? "bg-amoled-elevated text-text-muted cursor-not-allowed"
                     : "bg-yellow-600/20 text-yellow-400 hover:bg-yellow-600/30",
@@ -619,7 +621,7 @@ export default function SettingsPage() {
                 onClick={handleClearLibrary}
                 disabled={clearing !== null}
                 className={clsx(
-                  "flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                  "flex-1 px-5 py-3 rounded-lg text-base font-medium transition-colors",
                   clearing === "library"
                     ? "bg-amoled-elevated text-text-muted cursor-not-allowed"
                     : "bg-red-600/20 text-red-400 hover:bg-red-600/30",
@@ -631,11 +633,11 @@ export default function SettingsPage() {
           </div>
 
           {/* Warning */}
-          <div className="bg-amoled-card rounded-xl p-4 border border-red-900/50">
-            <div className="flex items-start gap-3">
-              <span className="text-xl">⚠️</span>
-              <div className="text-xs text-text-secondary">
-                <p className="mb-2">
+          <div className="bg-amoled-card rounded-xl p-5 border border-red-900/50">
+            <div className="flex items-start gap-4">
+              <span className="text-2xl">⚠️</span>
+              <div className="text-sm text-text-secondary">
+                <p className="mb-3">
                   <strong className="text-red-400">Warning:</strong> "Delete All
                   Music" will remove all downloaded FLAC files and clear the
                   music library database.
@@ -651,61 +653,171 @@ export default function SettingsPage() {
       </section>
 
       {/* Appearance Settings */}
-      <section className="mb-10">
-        <h2 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
+      <section className="mb-12">
+        <h2 className="text-xl font-semibold text-text-primary mb-6 flex items-center gap-3">
           <span>🎨</span>
           Appearance
         </h2>
-        <div className="space-y-6">
-          {/* Gradient Background */}
-          <div className="bg-amoled-card rounded-xl p-4 border border-amoled-border">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <label className="block text-sm font-medium text-text-primary">
-                  Animated Gradient Background
-                </label>
-                <p className="text-xs text-text-muted mt-1">
-                  Extract colors from album art for dynamic backgrounds
-                </p>
-              </div>
-              <Toggle checked={gradientEnabled} onChange={setGradientEnabled} />
+        <div className="space-y-5">
+          {/* Background Theme */}
+          <div className="bg-amoled-card rounded-xl p-5 border border-amoled-border">
+            <label className="block text-base font-medium text-text-primary mb-4">
+              Background Theme
+            </label>
+            <div className="space-y-3">
+              {/* Animated Gradient */}
+              <label
+                className={clsx(
+                  "flex items-center gap-4 p-4 rounded-xl cursor-pointer transition-all border-2",
+                  gradientMode === "animated"
+                    ? "bg-accent-primary/10 border-accent-primary"
+                    : "bg-amoled-elevated border-transparent hover:border-amoled-border",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="gradientMode"
+                  value="animated"
+                  checked={gradientMode === "animated"}
+                  onChange={() => setGradientMode("animated")}
+                  className="sr-only"
+                />
+                <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-500/50 via-blue-500/30 to-pink-500/40 animate-pulse relative overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent animate-float-slow" />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-text-primary">
+                    Animated Gradient
+                  </p>
+                  <p className="text-xs text-text-muted mt-0.5">
+                    Floating colors that dance with your music
+                  </p>
+                </div>
+                {gradientMode === "animated" && (
+                  <div className="w-5 h-5 rounded-full bg-accent-primary flex items-center justify-center">
+                    <svg
+                      className="w-3 h-3 text-black"
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </div>
+                )}
+              </label>
+
+              {/* Static Gradient */}
+              <label
+                className={clsx(
+                  "flex items-center gap-4 p-4 rounded-xl cursor-pointer transition-all border-2",
+                  gradientMode === "static"
+                    ? "bg-accent-primary/10 border-accent-primary"
+                    : "bg-amoled-elevated border-transparent hover:border-amoled-border",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="gradientMode"
+                  value="static"
+                  checked={gradientMode === "static"}
+                  onChange={() => setGradientMode("static")}
+                  className="sr-only"
+                />
+                <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-indigo-500/40 via-purple-500/30 to-pink-500/20" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-text-primary">
+                    Static Gradient
+                  </p>
+                  <p className="text-xs text-text-muted mt-0.5">
+                    Colors change with songs, no animation
+                  </p>
+                </div>
+                {gradientMode === "static" && (
+                  <div className="w-5 h-5 rounded-full bg-accent-primary flex items-center justify-center">
+                    <svg
+                      className="w-3 h-3 text-black"
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </div>
+                )}
+              </label>
+
+              {/* Pure AMOLED */}
+              <label
+                className={clsx(
+                  "flex items-center gap-4 p-4 rounded-xl cursor-pointer transition-all border-2",
+                  gradientMode === "off"
+                    ? "bg-accent-primary/10 border-accent-primary"
+                    : "bg-amoled-elevated border-transparent hover:border-amoled-border",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="gradientMode"
+                  value="off"
+                  checked={gradientMode === "off"}
+                  onChange={() => setGradientMode("off")}
+                  className="sr-only"
+                />
+                <div className="w-12 h-12 rounded-lg bg-black border border-amoled-border" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-text-primary">
+                    Pure AMOLED
+                  </p>
+                  <p className="text-xs text-text-muted mt-0.5">
+                    True black #000000, maximum battery saving
+                  </p>
+                </div>
+                {gradientMode === "off" && (
+                  <div className="w-5 h-5 rounded-full bg-accent-primary flex items-center justify-center">
+                    <svg
+                      className="w-3 h-3 text-black"
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </div>
+                )}
+              </label>
             </div>
 
-            {gradientEnabled && (
-              <div>
-                <label className="block text-sm font-medium text-text-primary mb-2">
+            {/* Intensity slider - only show when gradient is enabled */}
+            {gradientMode !== "off" && (
+              <div className="mt-5 pt-5 border-t border-amoled-border/50">
+                <label className="block text-sm font-medium text-text-primary mb-3">
                   Gradient Intensity
                 </label>
                 <input
                   type="range"
-                  min="0.1"
+                  min="0.2"
                   max="1"
                   step="0.1"
                   value={intensity}
                   onChange={(e) => setIntensity(parseFloat(e.target.value))}
-                  className="w-full"
+                  className="w-full h-2 bg-amoled-hover rounded-full appearance-none cursor-pointer accent-accent-primary"
                 />
-                <div className="flex justify-between text-xs text-text-muted mt-1">
+                <div className="flex justify-between text-xs text-text-muted mt-2">
                   <span>Subtle</span>
                   <span>Vibrant</span>
                 </div>
               </div>
             )}
-          </div>
-
-          {/* Pure AMOLED */}
-          <div className="bg-amoled-card rounded-xl p-4 border border-amoled-border">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="block text-sm font-medium text-text-primary">
-                  Pure AMOLED Mode
-                </label>
-                <p className="text-xs text-text-muted mt-1">
-                  True black #000000 backgrounds
-                </p>
-              </div>
-              <Toggle checked={true} onChange={() => {}} />
-            </div>
           </div>
         </div>
       </section>
@@ -718,7 +830,7 @@ export default function SettingsPage() {
         </h2>
         <div className="bg-amoled-card rounded-xl p-4 border border-amoled-border">
           <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-accent-primary to-accent-secondary flex items-center justify-center">
+            <div className="w-16 h-16 rounded-xl bg-linear-to-br from-accent-primary to-accent-secondary flex items-center justify-center">
               <span className="text-3xl">♪</span>
             </div>
             <div>
@@ -745,14 +857,14 @@ function Toggle({ checked, onChange }: ToggleProps) {
     <button
       onClick={() => onChange(!checked)}
       className={clsx(
-        "relative w-11 h-6 rounded-full transition-colors",
+        "relative w-14 h-7 rounded-full transition-colors shrink-0",
         checked ? "bg-accent-primary" : "bg-amoled-hover",
       )}
     >
       <span
         className={clsx(
-          "absolute top-1 w-4 h-4 bg-white rounded-full transition-transform",
-          checked ? "left-6" : "left-1",
+          "absolute top-1 w-5 h-5 bg-white rounded-full transition-transform shadow-md",
+          checked ? "left-8" : "left-1",
         )}
       />
     </button>

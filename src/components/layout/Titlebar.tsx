@@ -1,13 +1,16 @@
 import { useNavigate, useLocation } from "react-router-dom";
-import { appWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useState } from "react";
 import { clsx } from "clsx";
 import { SettingsIcon } from "../icons";
+import { useAuthStore } from "../../stores/authStore";
 
 export default function Titlebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [isMaximized, setIsMaximized] = useState(false);
+  const appWindow = getCurrentWindow();
+  const { user } = useAuthStore();
 
   const handleMinimize = () => appWindow.minimize();
   const handleMaximize = async () => {
@@ -17,6 +20,7 @@ export default function Titlebar() {
   const handleClose = () => appWindow.close();
 
   const isSettingsPage = location.pathname === "/settings";
+  const isProfilePage = location.pathname === "/profile";
 
   return (
     <div
@@ -32,7 +36,7 @@ export default function Titlebar() {
         <div className="flex items-center gap-2.5 mr-3">
           <div className="relative w-7 h-7">
             {/* Gradient logo */}
-            <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-accent-primary via-orange-400 to-pink-500" />
+            <div className="absolute inset-0 rounded-lg bg-linear-to-br from-accent-primary via-orange-400 to-pink-500" />
             <div className="absolute inset-0 rounded-lg flex items-center justify-center">
               <svg
                 className="w-4 h-4 text-black"
@@ -79,6 +83,44 @@ export default function Titlebar() {
 
       {/* Right - Actions and Window Controls */}
       <div className="flex items-center h-full">
+        {/* Profile Button */}
+        <button
+          onClick={() => navigate("/profile")}
+          className={clsx(
+            "h-full px-2 flex items-center justify-center transition-colors",
+            isProfilePage
+              ? "text-accent-primary bg-accent-primary/10"
+              : "text-text-secondary hover:text-text-primary hover:bg-amoled-hover",
+          )}
+          title="Profile"
+        >
+          <div className="w-5 h-5 rounded-full bg-amoled-card overflow-hidden border border-amoled-border">
+            {user?.user_metadata?.avatar_url ? (
+              <img
+                src={user.user_metadata.avatar_url}
+                alt="Profile"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-text-muted">
+                <svg
+                  className="w-3 h-3"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                  />
+                </svg>
+              </div>
+            )}
+          </div>
+        </button>
+
         {/* Settings Button */}
         <button
           onClick={() => navigate("/settings")}

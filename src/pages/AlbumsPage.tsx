@@ -1,29 +1,32 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { invoke } from '@tauri-apps/api/tauri';
-import { clsx } from 'clsx';
-import { useLibraryStore } from '../stores/libraryStore';
-import { usePlayerStore } from '../stores/playerStore';
-import AlbumArt from '../components/common/AlbumArt';
-import { PlayIcon, SearchIcon } from '../components/icons';
-import type { Album, Track } from '../types';
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { invoke } from "@tauri-apps/api/core";
+import { clsx } from "clsx";
+import { useLibraryStore } from "../stores/libraryStore";
+import { usePlayerStore } from "../stores/playerStore";
+import AlbumArt from "../components/common/AlbumArt";
+import { PlayIcon, SearchIcon } from "../components/icons";
+import type { Album, Track } from "../types";
 
 export default function AlbumsPage() {
   const navigate = useNavigate();
   const { albums } = useLibraryStore();
   const { playTrack } = usePlayerStore();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [albumArtworks, setAlbumArtworks] = useState<Record<string, string>>({});
+  const [searchQuery, setSearchQuery] = useState("");
+  const [albumArtworks, setAlbumArtworks] = useState<Record<string, string>>(
+    {},
+  );
 
-  const filteredAlbums = albums.filter(album =>
-    album.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    album.artist.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredAlbums = albums.filter(
+    (album) =>
+      album.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      album.artist.toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
   const handlePlayAlbum = async (album: Album, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      const tracks = await invoke<Track[]>('get_album_tracks', {
+      const tracks = await invoke<Track[]>("get_album_tracks", {
         album: album.name,
         artist: album.artist,
       });
@@ -31,12 +34,14 @@ export default function AlbumsPage() {
         playTrack(tracks[0], tracks);
       }
     } catch (error) {
-      console.error('Failed to play album:', error);
+      console.error("Failed to play album:", error);
     }
   };
 
   const handleAlbumClick = (album: Album) => {
-    navigate(`/albums/${encodeURIComponent(album.name)}/${encodeURIComponent(album.artist)}`);
+    navigate(
+      `/albums/${encodeURIComponent(album.name)}/${encodeURIComponent(album.artist)}`,
+    );
   };
 
   return (
@@ -71,7 +76,9 @@ export default function AlbumsPage() {
       ) : (
         <div className="text-center py-16">
           <p className="text-text-secondary">
-            {searchQuery ? 'No albums match your search' : 'No albums in your library'}
+            {searchQuery
+              ? "No albums match your search"
+              : "No albums in your library"}
           </p>
         </div>
       )}
@@ -91,14 +98,19 @@ function AlbumCard({ album, onClick, onPlay }: AlbumCardProps) {
 
   // Load first track artwork for the album
   useEffect(() => {
-    invoke<Track[]>('get_album_tracks', { album: album.name, artist: album.artist })
-      .then(tracks => {
+    invoke<Track[]>("get_album_tracks", {
+      album: album.name,
+      artist: album.artist,
+    })
+      .then((tracks) => {
         if (tracks.length > 0) {
-          return invoke<string | null>('get_track_artwork', { filePath: tracks[0].file_path });
+          return invoke<string | null>("get_track_artwork", {
+            filePath: tracks[0].file_path,
+          });
         }
         return null;
       })
-      .then(url => setArtwork(url))
+      .then((url) => setArtwork(url))
       .catch(console.error);
   }, [album.name, album.artist]);
 
@@ -116,11 +128,13 @@ function AlbumCard({ album, onClick, onPlay }: AlbumCardProps) {
           size="xl"
           className="w-full aspect-square"
         />
-        <div className={clsx(
-          'absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent flex items-end justify-end p-3 transition-opacity',
-          isHovered ? 'opacity-100' : 'opacity-0'
-        )}>
-          <button 
+        <div
+          className={clsx(
+            "absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent flex items-end justify-end p-3 transition-opacity",
+            isHovered ? "opacity-100" : "opacity-0",
+          )}
+        >
+          <button
             onClick={onPlay}
             className="p-3 bg-accent-primary rounded-full shadow-lg transform hover:scale-105 transition-transform"
           >
@@ -128,7 +142,9 @@ function AlbumCard({ album, onClick, onPlay }: AlbumCardProps) {
           </button>
         </div>
       </div>
-      <h3 className="font-medium text-text-primary truncate text-sm">{album.name}</h3>
+      <h3 className="font-medium text-text-primary truncate text-sm">
+        {album.name}
+      </h3>
       <p className="text-xs text-text-secondary truncate">
         {album.artist}
         {album.year && ` • ${album.year}`}

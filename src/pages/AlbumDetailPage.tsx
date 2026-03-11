@@ -1,38 +1,55 @@
-import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
-import { invoke } from '@tauri-apps/api/tauri';
-import { clsx } from 'clsx';
-import { usePlayerStore } from '../stores/playerStore';
-import { useLibraryStore } from '../stores/libraryStore';
-import { useGradient } from '../contexts/GradientContext';
-import AlbumArt from '../components/common/AlbumArt';
-import { PlayIcon, PauseIcon, HeartIcon, HeartFilledIcon, ClockIcon } from '../components/icons';
-import { formatTime, formatDuration, formatAudioQuality, isHiRes } from '../utils/format';
-import type { Track } from '../types';
+import { useState, useEffect } from "react";
+import { useParams } from "react-router-dom";
+import { invoke } from "@tauri-apps/api/core";
+import { clsx } from "clsx";
+import { usePlayerStore } from "../stores/playerStore";
+import { useLibraryStore } from "../stores/libraryStore";
+import { useGradient } from "../contexts/GradientContext";
+import AlbumArt from "../components/common/AlbumArt";
+import {
+  PlayIcon,
+  PauseIcon,
+  HeartIcon,
+  HeartFilledIcon,
+  ClockIcon,
+} from "../components/icons";
+import {
+  formatTime,
+  formatDuration,
+  formatAudioQuality,
+  isHiRes,
+} from "../utils/format";
+import type { Track } from "../types";
 
 export default function AlbumDetailPage() {
-  const { albumName, artistName } = useParams<{ albumName: string; artistName: string }>();
+  const { albumName, artistName } = useParams<{
+    albumName: string;
+    artistName: string;
+  }>();
   const [tracks, setTracks] = useState<Track[]>([]);
   const [artwork, setArtwork] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  
+
   const { playbackState, playTrack, togglePlayPause } = usePlayerStore();
   const { toggleFavorite } = useLibraryStore();
   const { setColorsFromImage } = useGradient();
 
-  const album = albumName ? decodeURIComponent(albumName) : '';
-  const artist = artistName ? decodeURIComponent(artistName) : '';
+  const album = albumName ? decodeURIComponent(albumName) : "";
+  const artist = artistName ? decodeURIComponent(artistName) : "";
 
   useEffect(() => {
     async function loadAlbum() {
       setIsLoading(true);
       try {
-        const albumTracks = await invoke<Track[]>('get_album_tracks', { album, artist });
+        const albumTracks = await invoke<Track[]>("get_album_tracks", {
+          album,
+          artist,
+        });
         setTracks(albumTracks);
 
         if (albumTracks.length > 0) {
-          const artworkUrl = await invoke<string | null>('get_track_artwork', { 
-            filePath: albumTracks[0].file_path 
+          const artworkUrl = await invoke<string | null>("get_track_artwork", {
+            filePath: albumTracks[0].file_path,
           });
           setArtwork(artworkUrl);
           if (artworkUrl) {
@@ -40,7 +57,7 @@ export default function AlbumDetailPage() {
           }
         }
       } catch (error) {
-        console.error('Failed to load album:', error);
+        console.error("Failed to load album:", error);
       } finally {
         setIsLoading(false);
       }
@@ -69,12 +86,14 @@ export default function AlbumDetailPage() {
   const totalDuration = tracks.reduce((acc, track) => acc + track.duration, 0);
   const firstTrack = tracks[0];
   const albumYear = firstTrack?.year;
-  const hasHiRes = tracks.some(t => isHiRes(t.bit_depth, t.sample_rate));
+  const hasHiRes = tracks.some((t) => isHiRes(t.bit_depth, t.sample_rate));
 
   if (isLoading) {
     return (
       <div className="p-6 pb-28 flex items-center justify-center min-h-screen">
-        <div className="animate-pulse text-text-secondary">Loading album...</div>
+        <div className="animate-pulse text-text-secondary">
+          Loading album...
+        </div>
       </div>
     );
   }
@@ -142,24 +161,30 @@ export default function AlbumDetailPage() {
 
         {/* Tracks */}
         {tracks.map((track, index) => {
-          const isPlaying = playbackState.current_track?.id === track.id && playbackState.is_playing;
+          const isPlaying =
+            playbackState.current_track?.id === track.id &&
+            playbackState.is_playing;
           const isCurrent = playbackState.current_track?.id === track.id;
 
           return (
             <div
               key={track.id}
               className={clsx(
-                'grid grid-cols-[auto_1fr_auto_auto_auto] gap-4 px-4 py-3 rounded-lg transition-colors group cursor-pointer',
-                isCurrent ? 'bg-amoled-hover' : 'hover:bg-amoled-card'
+                "grid grid-cols-[auto_1fr_auto_auto_auto] gap-4 px-4 py-3 rounded-lg transition-colors group cursor-pointer",
+                isCurrent ? "bg-amoled-hover" : "hover:bg-amoled-card",
               )}
               onClick={() => handlePlayTrack(track)}
             >
               {/* Track Number / Play Icon */}
               <div className="w-8 flex items-center justify-center">
-                <span className={clsx(
-                  'text-sm tabular-nums',
-                  isCurrent ? 'text-accent-primary' : 'text-text-muted group-hover:hidden'
-                )}>
+                <span
+                  className={clsx(
+                    "text-sm tabular-nums",
+                    isCurrent
+                      ? "text-accent-primary"
+                      : "text-text-muted group-hover:hidden",
+                  )}
+                >
                   {isPlaying ? (
                     <div className="flex items-center gap-0.5">
                       <span className="w-0.5 h-3 bg-accent-primary animate-pulse" />
@@ -177,23 +202,29 @@ export default function AlbumDetailPage() {
 
               {/* Title & Artist */}
               <div className="min-w-0">
-                <p className={clsx(
-                  'font-medium truncate',
-                  isCurrent ? 'text-accent-primary' : 'text-text-primary'
-                )}>
+                <p
+                  className={clsx(
+                    "font-medium truncate",
+                    isCurrent ? "text-accent-primary" : "text-text-primary",
+                  )}
+                >
                   {track.title}
                 </p>
-                <p className="text-sm text-text-secondary truncate">{track.artist}</p>
+                <p className="text-sm text-text-secondary truncate">
+                  {track.artist}
+                </p>
               </div>
 
               {/* Quality Badge */}
               <div className="w-20 flex items-center justify-end">
-                <span className={clsx(
-                  'text-2xs px-1.5 py-0.5 rounded',
-                  isHiRes(track.bit_depth, track.sample_rate)
-                    ? 'bg-accent-primary/20 text-accent-primary'
-                    : 'bg-amoled-hover text-text-muted'
-                )}>
+                <span
+                  className={clsx(
+                    "text-2xs px-1.5 py-0.5 rounded",
+                    isHiRes(track.bit_depth, track.sample_rate)
+                      ? "bg-accent-primary/20 text-accent-primary"
+                      : "bg-amoled-hover text-text-muted",
+                  )}
+                >
                   {track.bit_depth}bit
                 </span>
               </div>
@@ -205,8 +236,10 @@ export default function AlbumDetailPage() {
                   toggleFavorite(track.id);
                 }}
                 className={clsx(
-                  'w-8 flex items-center justify-center transition-colors',
-                  track.is_favorite ? 'text-red-500' : 'text-text-muted opacity-0 group-hover:opacity-100'
+                  "w-8 flex items-center justify-center transition-colors",
+                  track.is_favorite
+                    ? "text-red-500"
+                    : "text-text-muted opacity-0 group-hover:opacity-100",
                 )}
               >
                 {track.is_favorite ? (

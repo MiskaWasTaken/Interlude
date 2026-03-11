@@ -1,53 +1,57 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { invoke } from '@tauri-apps/api/tauri';
-import { clsx } from 'clsx';
-import { usePlayerStore } from '../stores/playerStore';
-import AlbumArt from '../components/common/AlbumArt';
-import { PlayIcon, ArtistIcon } from '../components/icons';
-import { formatDuration } from '../utils/format';
-import type { Album, Track } from '../types';
+import { useState, useEffect } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { invoke } from "@tauri-apps/api/core";
+import { clsx } from "clsx";
+import { usePlayerStore } from "../stores/playerStore";
+import AlbumArt from "../components/common/AlbumArt";
+import { PlayIcon, ArtistIcon } from "../components/icons";
+import { formatDuration } from "../utils/format";
+import type { Album, Track } from "../types";
 
 export default function ArtistDetailPage() {
   const { artistName } = useParams<{ artistName: string }>();
   const navigate = useNavigate();
   const [albums, setAlbums] = useState<Album[]>([]);
-  const [albumArtworks, setAlbumArtworks] = useState<Record<string, string>>({});
+  const [albumArtworks, setAlbumArtworks] = useState<Record<string, string>>(
+    {},
+  );
   const [isLoading, setIsLoading] = useState(true);
   const { playTrack } = usePlayerStore();
 
-  const artist = artistName ? decodeURIComponent(artistName) : '';
+  const artist = artistName ? decodeURIComponent(artistName) : "";
 
   useEffect(() => {
     async function loadArtist() {
       setIsLoading(true);
       try {
-        const artistAlbums = await invoke<Album[]>('get_artist_albums', { artist });
+        const artistAlbums = await invoke<Album[]>("get_artist_albums", {
+          artist,
+        });
         setAlbums(artistAlbums);
 
         // Load artworks for each album
         const artworks: Record<string, string> = {};
         for (const album of artistAlbums) {
           try {
-            const tracks = await invoke<Track[]>('get_album_tracks', { 
-              album: album.name, 
-              artist: album.artist 
+            const tracks = await invoke<Track[]>("get_album_tracks", {
+              album: album.name,
+              artist: album.artist,
             });
             if (tracks.length > 0) {
-              const url = await invoke<string | null>('get_track_artwork', { 
-                filePath: tracks[0].file_path 
+              const url = await invoke<string | null>("get_track_artwork", {
+                filePath: tracks[0].file_path,
               });
               if (url) {
                 artworks[album.name] = url;
               }
             }
           } catch (e) {
-            console.error('Failed to load artwork:', e);
+            console.error("Failed to load artwork:", e);
           }
         }
         setAlbumArtworks(artworks);
       } catch (error) {
-        console.error('Failed to load artist:', error);
+        console.error("Failed to load artist:", error);
       } finally {
         setIsLoading(false);
       }
@@ -61,7 +65,7 @@ export default function ArtistDetailPage() {
   const handlePlayAlbum = async (album: Album, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      const tracks = await invoke<Track[]>('get_album_tracks', {
+      const tracks = await invoke<Track[]>("get_album_tracks", {
         album: album.name,
         artist: album.artist,
       });
@@ -69,7 +73,7 @@ export default function ArtistDetailPage() {
         playTrack(tracks[0], tracks);
       }
     } catch (error) {
-      console.error('Failed to play album:', error);
+      console.error("Failed to play album:", error);
     }
   };
 
@@ -77,7 +81,7 @@ export default function ArtistDetailPage() {
     try {
       const allTracks: Track[] = [];
       for (const album of albums) {
-        const tracks = await invoke<Track[]>('get_album_tracks', {
+        const tracks = await invoke<Track[]>("get_album_tracks", {
           album: album.name,
           artist: album.artist,
         });
@@ -87,17 +91,22 @@ export default function ArtistDetailPage() {
         playTrack(allTracks[0], allTracks);
       }
     } catch (error) {
-      console.error('Failed to play all:', error);
+      console.error("Failed to play all:", error);
     }
   };
 
   const totalTracks = albums.reduce((acc, album) => acc + album.track_count, 0);
-  const totalDuration = albums.reduce((acc, album) => acc + album.total_duration, 0);
+  const totalDuration = albums.reduce(
+    (acc, album) => acc + album.total_duration,
+    0,
+  );
 
   if (isLoading) {
     return (
       <div className="p-6 pb-28 flex items-center justify-center min-h-screen">
-        <div className="animate-pulse text-text-secondary">Loading artist...</div>
+        <div className="animate-pulse text-text-secondary">
+          Loading artist...
+        </div>
       </div>
     );
   }
@@ -113,9 +122,13 @@ export default function ArtistDetailPage() {
           <p className="text-xs font-medium text-text-secondary uppercase tracking-wider mb-2">
             Artist
           </p>
-          <h1 className="text-4xl font-bold text-text-primary mb-2">{artist}</h1>
+          <h1 className="text-4xl font-bold text-text-primary mb-2">
+            {artist}
+          </h1>
           <div className="flex items-center gap-2 text-text-secondary">
-            <span>{albums.length} album{albums.length !== 1 ? 's' : ''}</span>
+            <span>
+              {albums.length} album{albums.length !== 1 ? "s" : ""}
+            </span>
             <span>•</span>
             <span>{totalTracks} songs</span>
             <span>•</span>
@@ -144,7 +157,11 @@ export default function ArtistDetailPage() {
               key={album.name}
               album={album}
               artwork={albumArtworks[album.name]}
-              onClick={() => navigate(`/albums/${encodeURIComponent(album.name)}/${encodeURIComponent(album.artist)}`)}
+              onClick={() =>
+                navigate(
+                  `/albums/${encodeURIComponent(album.name)}/${encodeURIComponent(album.artist)}`,
+                )
+              }
               onPlay={(e) => handlePlayAlbum(album, e)}
             />
           ))}
@@ -178,10 +195,12 @@ function AlbumCard({ album, artwork, onClick, onPlay }: AlbumCardProps) {
           size="xl"
           className="w-full aspect-square"
         />
-        <div className={clsx(
-          'absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent flex items-end justify-end p-3 transition-opacity',
-          isHovered ? 'opacity-100' : 'opacity-0'
-        )}>
+        <div
+          className={clsx(
+            "absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent flex items-end justify-end p-3 transition-opacity",
+            isHovered ? "opacity-100" : "opacity-0",
+          )}
+        >
           <button
             onClick={onPlay}
             className="p-3 bg-accent-primary rounded-full shadow-lg transform hover:scale-105 transition-transform"
@@ -190,9 +209,11 @@ function AlbumCard({ album, artwork, onClick, onPlay }: AlbumCardProps) {
           </button>
         </div>
       </div>
-      <h3 className="font-medium text-text-primary truncate text-sm">{album.name}</h3>
+      <h3 className="font-medium text-text-primary truncate text-sm">
+        {album.name}
+      </h3>
       <p className="text-xs text-text-secondary">
-        {album.year || 'Unknown year'} • {album.track_count} tracks
+        {album.year || "Unknown year"} • {album.track_count} tracks
       </p>
     </div>
   );

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { clsx } from "clsx";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { useStreamingStore } from "../../stores/streamingStore";
 import { usePlayerStore } from "../../stores/playerStore";
 import { SearchIcon, GlobeIcon, PlayIcon } from "../icons";
@@ -129,7 +129,7 @@ export default function GlobalSearchBar() {
     <div className="relative flex-1 max-w-2xl mx-auto">
       {/* Search Input */}
       <div className="relative">
-        <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" />
+        <SearchIcon className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted pointer-events-none" />
         <input
           ref={inputRef}
           type="text"
@@ -140,10 +140,10 @@ export default function GlobalSearchBar() {
           }}
           onFocus={() => setIsOpen(true)}
           placeholder="Search songs, albums, artists... (Ctrl+K)"
-          className="w-full pl-12 pr-4 py-3 bg-amoled-card rounded-full text-text-primary placeholder-text-muted border border-amoled-border focus:border-accent-primary focus:outline-none transition-colors"
+          className="w-full pl-14 pr-6 py-3.5 bg-amoled-card rounded-full text-sm text-text-primary placeholder-text-muted border border-amoled-border focus:border-accent-primary focus:outline-none transition-colors"
         />
         {isSearching && (
-          <div className="absolute right-4 top-1/2 -translate-y-1/2">
+          <div className="absolute right-6 top-1/2 -translate-y-1/2">
             <div className="w-5 h-5 border-2 border-accent-primary border-t-transparent rounded-full animate-spin" />
           </div>
         )}
@@ -153,7 +153,7 @@ export default function GlobalSearchBar() {
       {isOpen && query.trim() && (
         <div
           ref={dropdownRef}
-          className="absolute top-full left-0 right-0 mt-2 bg-amoled-elevated rounded-xl shadow-2xl border border-amoled-border overflow-hidden z-50 max-h-[70vh] overflow-y-auto"
+          className="absolute top-full left-0 right-0 mt-3 bg-amoled-elevated rounded-2xl shadow-dropdown border border-amoled-border overflow-hidden z-50 max-h-[70vh] overflow-y-auto scrollbar-thin"
         >
           {/* Spotify Credentials Banner */}
           {hasCredentials === false && (
@@ -165,8 +165,8 @@ export default function GlobalSearchBar() {
 
           {/* Local Results */}
           {localResults && localResults.tracks.length > 0 && (
-            <div className="p-3">
-              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2 px-2">
+            <div className="p-4">
+              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3 px-2">
                 From Your Library
               </h3>
               <div className="space-y-1">
@@ -261,7 +261,7 @@ function LocalTrackItem({
       className="flex items-center gap-3 p-2 rounded-lg hover:bg-amoled-hover cursor-pointer group transition-colors"
       onClick={onPlay}
     >
-      <div className="relative w-10 h-10 flex-shrink-0 rounded overflow-hidden bg-amoled-card">
+      <div className="relative w-10 h-10 shrink-0 rounded overflow-hidden bg-amoled-card">
         {artwork ? (
           <img
             src={artwork}
@@ -310,7 +310,7 @@ function OnlineTrackItem({
       )}
       onClick={onPlay}
     >
-      <div className="relative w-10 h-10 flex-shrink-0 rounded overflow-hidden bg-amoled-card">
+      <div className="relative w-10 h-10 shrink-0 rounded overflow-hidden bg-amoled-card">
         {track.cover_url ? (
           <img
             src={track.cover_url}

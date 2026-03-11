@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { clsx } from "clsx";
 import { useLibraryStore } from "../stores/libraryStore";
 import { usePlayerStore } from "../stores/playerStore";
@@ -107,9 +107,9 @@ export default function HomePage() {
   ];
 
   return (
-    <div className="min-h-full bg-gradient-to-b from-amoled-elevated to-amoled-black">
+    <div className="min-h-full bg-linear-to-b from-amoled-elevated to-amoled-black">
       {/* Header with filter pills */}
-      <div className="sticky top-0 z-20 px-6 pt-4 pb-4 bg-gradient-to-b from-amoled-elevated/95 to-transparent backdrop-blur-sm">
+      <div className="sticky top-0 z-20 px-6 pt-4 pb-4 bg-linear-to-b from-amoled-elevated/95 to-transparent backdrop-blur-sm">
         <div className="flex items-center gap-2">
           {filterTabs.map((tab) => (
             <button
@@ -158,7 +158,7 @@ export default function HomePage() {
                     onMouseLeave={() => setHoveredCard(null)}
                     className="flex items-center bg-amoled-card/60 hover:bg-amoled-card rounded overflow-hidden cursor-pointer group transition-colors"
                   >
-                    <div className="w-20 h-20 flex-shrink-0">
+                    <div className="w-20 h-20 shrink-0">
                       <AlbumArt
                         src={albumArtworks[key]}
                         alt={track.album}
@@ -303,20 +303,26 @@ export default function HomePage() {
 
         {/* Empty State */}
         {tracks.length === 0 && (
-          <div className="text-center py-20">
-            <div className="w-32 h-32 mx-auto mb-8 rounded-full bg-amoled-card flex items-center justify-center">
-              <span className="text-6xl">🎵</span>
+          <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
+            <div className="w-40 h-40 mb-8 rounded-full bg-amoled-card flex items-center justify-center">
+              <svg
+                className="w-20 h-20 text-purple-400"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+              </svg>
             </div>
-            <h2 className="text-3xl font-bold text-text-primary mb-3">
+            <h2 className="text-3xl font-bold text-text-primary mb-4">
               Your library is empty
             </h2>
-            <p className="text-text-secondary mb-8 max-w-md mx-auto text-lg">
+            <p className="text-text-secondary mb-8 max-w-md mx-auto text-lg leading-relaxed">
               Add some folders containing your FLAC, WAV, or ALAC files to get
               started with high-resolution audio.
             </p>
             <button
               onClick={() => navigate("/library")}
-              className="px-8 py-3 bg-text-primary text-amoled-black font-semibold rounded-full hover:scale-105 transition-transform"
+              className="px-12 py-4 bg-text-primary text-amoled-black font-semibold rounded-full hover:scale-105 transition-transform text-lg"
             >
               Add Music Folder
             </button>
@@ -356,7 +362,7 @@ function AlbumCard({
     >
       <div className="relative mb-4">
         <div className="aspect-square rounded-md overflow-hidden shadow-lg bg-amoled-hover">
-          <div className="w-full h-full bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 flex items-center justify-center">
+          <div className="w-full h-full bg-linear-to-br from-purple-600 via-pink-500 to-orange-400 flex items-center justify-center">
             <span className="text-white text-4xl font-bold">0{index}</span>
           </div>
         </div>
